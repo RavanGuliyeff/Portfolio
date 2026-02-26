@@ -9,7 +9,7 @@ export const Footer: React.FC = () => {
     <footer className="border-t dark:border-dark-border border-light-border py-10 mt-0">
       <div className="section-container flex flex-col sm:flex-row items-center justify-between gap-4">
         <p className="text-sm dark:text-slate-500 text-slate-500">
-          © {year} <span className="text-accent-400 font-semibold">{OWNER.name}</span> — Built with React &amp; ❤️
+          © {year} <span className="text-accent-400 font-semibold">{OWNER.name}</span> — Built with React
         </p>
 
         <div className="flex items-center gap-4">
