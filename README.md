@@ -4,7 +4,8 @@ A visually stunning, production-quality portfolio website for a backend-oriented
 
 ## 🚀 Live Demo
 
-> Deploy to Vercel / Netlify by connecting this repository.
+> Deploy to Vercel
+> https://myportfolio-tau-fawn.vercel.app/
 
 ---
 
