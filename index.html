@@ -2,24 +2,72 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Ravan Guliyev — Backend-Oriented Full Stack Developer. C#/.NET Core specialist, competitive programmer, and mentor based in Baku, Azerbaijan." />
-    <meta name="keywords" content="Ravan Guliyev, backend developer, .NET, C#, ASP.NET, portfolio, Baku, Azerbaijan" />
-    <meta property="og:title" content="Ravan Guliyev | Full Stack Developer" />
-    <meta property="og:description" content="Backend-oriented full stack developer specialising in C#, .NET Core, and scalable architecture." />
+    <title>Ravan Guliyev — Backend Developer (C# / .NET)</title>
+    <meta
+      name="description"
+      content="Ravan Guliyev is a backend-focused full-stack developer from Baku, Azerbaijan, building REST and GraphQL APIs with C#, ASP.NET Core, PostgreSQL and SQL Server."
+    />
+    <meta name="author" content="Ravan Guliyev" />
+    <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
+    <link rel="canonical" href="https://www.ravanguliyev.dev/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
     <meta property="og:type" content="website" />
-    <title>Ravan Guliyev | Full Stack Developer</title>
-    <!-- Google Fonts -->
+    <meta property="og:url" content="https://www.ravanguliyev.dev/" />
+    <meta property="og:title" content="Ravan Guliyev — Backend Developer (C# / .NET)" />
+    <meta
+      property="og:description"
+      content="Backend developer building reliable APIs and data-heavy systems with C#, ASP.NET Core and PostgreSQL."
+    />
+    <meta property="og:image" content="https://www.ravanguliyev.dev/og.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Ravan Guliyev — Backend Developer (C# / .NET)" />
+    <meta property="og:site_name" content="Ravan Guliyev" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://www.ravanguliyev.dev/og.jpg" />
+
+    <!-- Apply the saved theme before first paint to avoid a light/dark flash -->
+    <script>
+      try {
+        var t = localStorage.getItem('rg-theme')
+        if (!t) t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+        document.documentElement.classList.toggle('dark', t === 'dark')
+      } catch (e) {}
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Person",
+        "name": "Ravan Guliyev",
+        "jobTitle": "Backend Developer",
+        "url": "https://www.ravanguliyev.dev/",
+        "email": "mailto:hi@ravanguliyev.dev",
+        "address": { "@type": "PostalAddress", "addressLocality": "Baku", "addressCountry": "AZ" },
+        "sameAs": [
+          "https://github.com/RavanGuliyeff",
+          "https://www.linkedin.com/in/ravan-guliyev-72535735b/"
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <p style="padding: 2rem; font-family: sans-serif">
+        Ravan Guliyev — Backend Developer. Email: hi@ravanguliyev.dev
+      </p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

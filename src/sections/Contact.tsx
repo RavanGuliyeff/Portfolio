@@ -1,282 +1,307 @@
-import React, { useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import emailjs from '@emailjs/browser'
-import { Send, Github, Linkedin, Mail, CheckCircle, XCircle, MapPin } from 'lucide-react'
+import { useState } from 'react'
+import type { ChangeEvent, FormEvent, ReactNode } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { Check, CheckCircle2, Copy, Github, Linkedin, Loader2, Mail, Send, TriangleAlert } from 'lucide-react'
+import { Section } from '@/components/shared/Section'
 import { SectionHeader } from '@/components/shared/SectionHeader'
+import { Reveal } from '@/components/shared/Reveal'
 import { Button } from '@/components/ui/Button'
 import { OWNER } from '@/constants/portfolio'
-import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { emailServiceConfigured, mailtoLink, sendMessage } from '@/lib/sendMessage'
 import type { ContactFormData } from '@/types'
+import { useI18n } from '@/i18n/I18nProvider'
+import type { Dictionary } from '@/i18n/types'
 
-// ─── REPLACE with your actual EmailJS credentials ────────────────────────────
-const EMAILJS_SERVICE_ID  = 'YOUR_SERVICE_ID'   // e.g. service_xxxxxxx
-const EMAILJS_TEMPLATE_ID = 'YOUR_TEMPLATE_ID'  // e.g. template_xxxxxxx
-const EMAILJS_PUBLIC_KEY  = 'YOUR_PUBLIC_KEY'   // e.g. xxxxxxxxxxxxxxxxxxxx
-// ─────────────────────────────────────────────────────────────────────────────
+type Status = 'idle' | 'sending' | 'sent' | 'failed' | 'mailto'
+type Errors = Partial<Record<keyof ContactFormData, string>>
 
-type Status = 'idle' | 'loading' | 'success' | 'error'
+const EMPTY: ContactFormData = { name: '', email: '', subject: '', message: '' }
+const LIMITS = { name: 80, email: 120, subject: 120, message: 4000 }
 
-const initialForm: ContactFormData = { name: '', email: '', subject: '', message: '' }
+function validate(f: ContactFormData, msg: Dictionary['contact']['errors']): Errors {
+  const e: Errors = {}
+  if (!f.name.trim()) e.name = msg.name
+  if (!f.email.trim()) e.email = msg.email
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(f.email.trim())) e.email = msg.emailInvalid
+  if (!f.subject.trim()) e.subject = msg.subject
+  if (f.message.trim().length < 10) e.message = msg.message
+  return e
+}
 
-export const Contact: React.FC = () => {
-  const reduced = usePrefersReducedMotion()
-  const [form,   setForm]   = useState<ContactFormData>(initialForm)
-  const [errors, setErrors] = useState<Partial<ContactFormData>>({})
+function Field({
+  id,
+  label,
+  error,
+  children,
+}: {
+  id: keyof ContactFormData
+  label: string
+  error?: string
+  children: ReactNode
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-fg">
+        {label}
+      </label>
+      {children}
+      {error && (
+        <p id={`${id}-error`} className="mt-1.5 text-sm text-red-500">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+export function Contact() {
+  const { t } = useI18n()
+  const c = t.contact
+  const [form, setForm] = useState(EMPTY)
+  const [errors, setErrors] = useState<Errors>({})
   const [status, setStatus] = useState<Status>('idle')
+  const [honeypot, setHoneypot] = useState('')
+  const [copied, setCopied] = useState(false)
 
-  const validate = (): boolean => {
-    const e: Partial<ContactFormData> = {}
-    if (!form.name.trim())    e.name    = 'Name is required'
-    if (!form.email.trim())   e.email   = 'Email is required'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Enter a valid email'
-    if (!form.subject.trim()) e.subject = 'Subject is required'
-    if (!form.message.trim()) e.message = 'Message cannot be empty'
-    setErrors(e)
-    return Object.keys(e).length === 0
-  }
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const onChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
     setForm(f => ({ ...f, [name]: value }))
-    setErrors(err => ({ ...err, [name]: undefined }))
+    if (errors[name as keyof ContactFormData]) setErrors(err => ({ ...err, [name]: undefined }))
+    if (status === 'failed' || status === 'sent' || status === 'mailto') setStatus('idle')
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!validate()) return
-    setStatus('loading')
+    const found = validate(form, c.errors)
+    setErrors(found)
+    if (Object.keys(found).length) {
+      document.getElementById(Object.keys(found)[0])?.focus()
+      return
+    }
+    // Bots fill every field, people never see this one.
+    if (honeypot) {
+      setStatus('sent')
+      return
+    }
+
+    if (!emailServiceConfigured) {
+      window.location.href = mailtoLink(form)
+      setStatus('mailto')
+      return
+    }
+
+    setStatus('sending')
     try {
-      await emailjs.send(
-        EMAILJS_SERVICE_ID,
-        EMAILJS_TEMPLATE_ID,
-        {
-          from_name:    form.name,
-          from_email:   form.email,
-          subject:      form.subject,
-          message:      form.message,
-          reply_to:     form.email,
-        },
-        EMAILJS_PUBLIC_KEY
-      )
-      setStatus('success')
-      setForm(initialForm)
-      setTimeout(() => setStatus('idle'), 5000)
-    } catch {
-      setStatus('error')
-      setTimeout(() => setStatus('idle'), 5000)
+      await sendMessage({
+        name: form.name.trim(),
+        email: form.email.trim(),
+        subject: form.subject.trim(),
+        message: form.message.trim(),
+      })
+      setStatus('sent')
+      setForm(EMPTY)
+    } catch (err) {
+      console.error('Contact form failed to send:', err)
+      setStatus('failed')
     }
   }
 
-  const inputCls = (field: keyof ContactFormData) =>
-    `w-full px-4 py-3 rounded-xl border text-sm font-body bg-dark-card dark:bg-dark-card bg-light-card
-     dark:text-slate-100 text-slate-900 placeholder:text-slate-500
-     focus:outline-none focus:ring-2 focus:ring-accent-500 transition-all duration-200
-     ${errors[field]
-       ? 'border-red-500/70'
-       : 'dark:border-dark-border border-light-border hover:border-accent-500/40'}`
+  const copyEmail = async () => {
+    try {
+      await navigator.clipboard.writeText(OWNER.email)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    } catch {
+      window.location.href = `mailto:${OWNER.email}`
+    }
+  }
+
+  const describedBy = (k: keyof ContactFormData) => (errors[k] ? `${k}-error` : undefined)
 
   return (
-    <section
-      id="contact"
-      className="py-24 dark:bg-dark-surface bg-light-surface"
-      aria-label="Contact section"
-    >
-      <div className="section-container">
-        <SectionHeader
-          label="Get In Touch"
-          title="Let's "
-          highlight="Connect"
-          subtitle="Got a project, opportunity, or just want to chat about backend architecture? Drop me a message."
-        />
+    <Section id="contact" label={t.nav.contact} muted>
+      <div className="grid gap-12 lg:grid-cols-[1fr_1.25fr]">
+        <div>
+          <SectionHeader
+            eyebrow={c.eyebrow}
+            title={c.title}
+            description={c.description}
+          />
 
-        <div className="grid lg:grid-cols-2 gap-12 mt-4 items-start">
-          {/* Left – visual / info */}
-          <motion.div
-            initial={reduced ? {} : { opacity: 0, x: -30 }}
-            whileInView={reduced ? {} : { opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6 }}
-            className="flex flex-col gap-8"
-          >
-            <div className="dark:bg-dark-card bg-light-card border dark:border-dark-border border-light-border rounded-2xl p-8">
-              <blockquote className="text-lg font-heading font-medium dark:text-slate-200 text-slate-800 leading-relaxed mb-6">
-                "Good software is like a good friend — it does what you expect, doesn't break under pressure, and is easy to talk to."
-              </blockquote>
-              <p className="text-sm dark:text-slate-500 text-slate-500 font-mono">— Ravan Guliyev</p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center gap-3 dark:text-slate-400 text-slate-600">
-                <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
-                  <Mail size={18} className="text-accent-400" />
-                </div>
-                <div>
-                  <p className="text-xs dark:text-slate-500 text-slate-500">Email</p>
-                  <a href={`mailto:${OWNER.email}`} className="text-sm hover:text-accent-400 transition-colors">
-                    {OWNER.email}
-                  </a>
-                </div>
+          <Reveal className="space-y-3">
+            <div className="card flex items-center gap-4 p-4">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/10 text-accent-text">
+                <Mail size={18} />
               </div>
-
-              <div className="flex items-center gap-3 dark:text-slate-400 text-slate-600">
-                <div className="w-10 h-10 rounded-xl bg-accent-500/10 flex items-center justify-center">
-                  <MapPin size={18} className="text-accent-400" />
-                </div>
-                <div>
-                  <p className="text-xs dark:text-slate-500 text-slate-500">Location</p>
-                  <p className="text-sm">{OWNER.location}</p>
-                </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-subtle">{c.email}</p>
+                <a href={`mailto:${OWNER.email}`} className="truncate text-[15px] text-fg hover:text-accent-text">
+                  {OWNER.email}
+                </a>
               </div>
+              <button
+                type="button"
+                onClick={copyEmail}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-elevated hover:text-fg"
+                aria-label={c.copy}
+                title={c.copy}
+              >
+                {copied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
+              </button>
             </div>
-
-            {/* Social links */}
             <div className="flex gap-3">
-              {[
-                { href: OWNER.github,   icon: <Github  size={20} />, label: 'GitHub'   },
-                { href: OWNER.linkedin, icon: <Linkedin size={20} />, label: 'LinkedIn' },
-                { href: `mailto:${OWNER.email}`, icon: <Mail size={20} />, label: 'Email' },
-              ].map(s => (
-                <motion.a
-                  key={s.label}
-                  href={s.href}
-                  target={s.href.startsWith('mailto') ? undefined : '_blank'}
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl dark:bg-dark-card bg-light-card border dark:border-dark-border border-light-border dark:text-slate-400 text-slate-600 hover:text-accent-400 hover:border-accent-500/40 transition-all text-sm font-medium"
-                  whileHover={{ y: -2 }}
-                  aria-label={s.label}
-                >
-                  {s.icon}
-                  {s.label}
-                </motion.a>
-              ))}
+              <a
+                href={OWNER.linkedin}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="card flex flex-1 items-center justify-center gap-2 p-3 text-sm text-muted transition-colors hover:text-fg"
+              >
+                <Linkedin size={16} /> LinkedIn
+              </a>
+              <a
+                href={OWNER.github}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="card flex flex-1 items-center justify-center gap-2 p-3 text-sm text-muted transition-colors hover:text-fg"
+              >
+                <Github size={16} /> GitHub
+              </a>
             </div>
-          </motion.div>
+          </Reveal>
+        </div>
 
-          {/* Right – form */}
-          <motion.form
-            onSubmit={handleSubmit}
-            initial={reduced ? {} : { opacity: 0, x: 30 }}
-            whileInView={reduced ? {} : { opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-            className="dark:bg-dark-card bg-light-card border dark:border-dark-border border-light-border rounded-2xl p-6 sm:p-8 space-y-4"
-            noValidate
-            aria-label="Contact form"
-          >
-            {/* Name + Email row */}
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="name" className="block text-xs font-medium dark:text-slate-400 text-slate-600 mb-1.5">
-                  Name *
-                </label>
+        <Reveal delay={0.06}>
+          <form onSubmit={onSubmit} noValidate className="card relative space-y-5 p-6 sm:p-8" aria-label={c.title}>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field id="name" label={c.fields.name} error={errors.name}>
                 <input
                   id="name"
                   name="name"
-                  type="text"
+                  className="input"
                   value={form.name}
-                  onChange={handleChange}
-                  placeholder="Your name"
-                  className={inputCls('name')}
+                  onChange={onChange}
+                  maxLength={LIMITS.name}
                   autoComplete="name"
-                  aria-required="true"
-                  aria-describedby={errors.name ? 'name-error' : undefined}
+                  aria-invalid={!!errors.name}
+                  aria-describedby={describedBy('name')}
                 />
-                {errors.name && <p id="name-error" className="mt-1 text-xs text-red-400">{errors.name}</p>}
-              </div>
-              <div>
-                <label htmlFor="email" className="block text-xs font-medium dark:text-slate-400 text-slate-600 mb-1.5">
-                  Email *
-                </label>
+              </Field>
+              <Field id="email" label={c.fields.email} error={errors.email}>
                 <input
                   id="email"
                   name="email"
                   type="email"
+                  inputMode="email"
+                  className="input"
                   value={form.email}
-                  onChange={handleChange}
-                  placeholder="you@example.com"
-                  className={inputCls('email')}
+                  onChange={onChange}
+                  maxLength={LIMITS.email}
                   autoComplete="email"
-                  aria-required="true"
-                  aria-describedby={errors.email ? 'email-error' : undefined}
+                  aria-invalid={!!errors.email}
+                  aria-describedby={describedBy('email')}
                 />
-                {errors.email && <p id="email-error" className="mt-1 text-xs text-red-400">{errors.email}</p>}
-              </div>
+              </Field>
             </div>
-
-            {/* Subject */}
-            <div>
-              <label htmlFor="subject" className="block text-xs font-medium dark:text-slate-400 text-slate-600 mb-1.5">
-                Subject *
-              </label>
+            <Field id="subject" label={c.fields.subject} error={errors.subject}>
               <input
                 id="subject"
                 name="subject"
-                type="text"
+                className="input"
                 value={form.subject}
-                onChange={handleChange}
-                placeholder="What's it about?"
-                className={inputCls('subject')}
-                aria-required="true"
-                aria-describedby={errors.subject ? 'subject-error' : undefined}
+                onChange={onChange}
+                maxLength={LIMITS.subject}
+                aria-invalid={!!errors.subject}
+                aria-describedby={describedBy('subject')}
               />
-              {errors.subject && <p id="subject-error" className="mt-1 text-xs text-red-400">{errors.subject}</p>}
-            </div>
-
-            {/* Message */}
-            <div>
-              <label htmlFor="message" className="block text-xs font-medium dark:text-slate-400 text-slate-600 mb-1.5">
-                Message *
-              </label>
+            </Field>
+            <Field id="message" label={c.fields.message} error={errors.message}>
               <textarea
                 id="message"
                 name="message"
-                rows={5}
+                rows={6}
+                className="input resize-y"
                 value={form.message}
-                onChange={handleChange}
-                placeholder="Tell me about your project…"
-                className={`${inputCls('message')} resize-none`}
-                aria-required="true"
-                aria-describedby={errors.message ? 'message-error' : undefined}
+                onChange={onChange}
+                maxLength={LIMITS.message}
+                aria-invalid={!!errors.message}
+                aria-describedby={describedBy('message')}
               />
-              {errors.message && <p id="message-error" className="mt-1 text-xs text-red-400">{errors.message}</p>}
+            </Field>
+
+            {/* Honeypot: hidden from people and screen readers */}
+            <div className="absolute -left-[9999px] h-0 w-0 overflow-hidden" aria-hidden="true">
+              <label>
+                Company
+                <input tabIndex={-1} autoComplete="off" value={honeypot} onChange={e => setHoneypot(e.target.value)} />
+              </label>
             </div>
 
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              className="w-full justify-center"
-              disabled={status === 'loading'}
-              icon={<Send size={16} />}
-              aria-label="Send message"
-            >
-              {status === 'loading' ? 'Sending…' : 'Send Message'}
-            </Button>
+            <div className="flex flex-col-reverse items-stretch gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-subtle">
+                {emailServiceConfigured ? c.viaService : c.viaMailApp}
+              </p>
+              <Button
+                type="submit"
+                size="lg"
+                disabled={status === 'sending'}
+                icon={status === 'sending' ? <Loader2 size={17} className="animate-spin" /> : <Send size={16} />}
+              >
+                {status === 'sending' ? c.sending : c.send}
+              </Button>
+            </div>
 
-            {/* Toast */}
-            <AnimatePresence>
-              {(status === 'success' || status === 'error') && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
+            <AnimatePresence mode="wait">
+              {status === 'sent' && (
+                <motion.p
+                  key="sent"
+                  role="status"
+                  initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className={`flex items-center gap-2 px-4 py-3 rounded-xl text-sm ${
-                    status === 'success'
-                      ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                      : 'bg-red-500/15 text-red-300 border border-red-500/30'
-                  }`}
-                  role="alert"
+                  exit={{ opacity: 0 }}
+                  className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300"
                 >
-                  {status === 'success'
-                    ? <><CheckCircle size={16} /> Message sent! I'll get back to you soon.</>
-                    : <><XCircle    size={16} /> Something went wrong. Please try again.</>
-                  }
+                  <CheckCircle2 size={17} /> {c.success}
+                </motion.p>
+              )}
+              {status === 'mailto' && (
+                <motion.p
+                  key="mailto"
+                  role="status"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="rounded-xl border border-line bg-elevated px-4 py-3 text-sm text-muted"
+                >
+                  {c.mailtoInfo}{' '}
+                  <a className="link" href={`mailto:${OWNER.email}`}>
+                    {OWNER.email}
+                  </a>
+                  .
+                </motion.p>
+              )}
+              {status === 'failed' && (
+                <motion.div
+                  key="failed"
+                  role="alert"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+                >
+                  <TriangleAlert size={17} className="mt-0.5 shrink-0" />
+                  <p>
+                    {c.failed}{' '}
+                    <a className="font-medium underline underline-offset-2" href={mailtoLink(form)}>
+                      {c.failedLink}
+                    </a>{' '}
+                    {c.failedTail}
+                  </p>
                 </motion.div>
               )}
             </AnimatePresence>
-          </motion.form>
-        </div>
+          </form>
+        </Reveal>
       </div>
-    </section>
+    </Section>
   )
 }

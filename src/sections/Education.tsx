@@ -1,128 +1,67 @@
-import React from 'react'
-import { motion } from 'framer-motion'
-import { GraduationCap, Award, Calendar } from 'lucide-react'
+import { Award, GraduationCap } from 'lucide-react'
+import { Section } from '@/components/shared/Section'
 import { SectionHeader } from '@/components/shared/SectionHeader'
-import { EDUCATION, CERTIFICATIONS } from '@/constants/portfolio'
-import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { Reveal } from '@/components/shared/Reveal'
+import { CERTIFICATIONS, EDUCATION } from '@/constants/portfolio'
+import { useI18n } from '@/i18n/I18nProvider'
 
-const cardVariants = {
-  hidden:  { opacity: 0, y: 24 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.5, delay: i * 0.1 },
-  }),
-}
-
-export const Education: React.FC = () => {
-  const reduced = usePrefersReducedMotion()
-
+export function Education() {
+  const { t, range, date } = useI18n()
   return (
-    <section
-      id="education"
-      className="py-24 dark:bg-dark-surface bg-light-surface"
-      aria-label="Education and certifications section"
-    >
-      <div className="section-container">
-        <SectionHeader
-          label="Background"
-          title="Education & "
-          highlight="Certifications"
-          subtitle="Formal degree, immersive academies, and industry certifications — a well-rounded foundation."
-        />
+    <Section id="education" label={t.nav.education}>
+      <SectionHeader eyebrow={t.education.eyebrow} title={t.education.title} />
 
-        <div className="grid lg:grid-cols-2 gap-10 mt-4">
-          {/* Education column */}
-          <div>
-            <div className="flex items-center gap-2 mb-6">
-              <GraduationCap className="text-accent-400" size={20} />
-              <h3 className="font-heading font-semibold text-lg dark:text-white text-slate-800">
-                Education
-              </h3>
-            </div>
-            <div className="space-y-4">
-              {EDUCATION.map((edu, i) => (
-                <motion.div
-                  key={edu.id}
-                  className="dark:bg-dark-card bg-light-card border dark:border-dark-border border-light-border rounded-2xl p-5 hover-glow"
-                  custom={i}
-                  variants={reduced ? {} : cardVariants}
-                  initial="hidden"
-                  whileInView="visible"
-                  viewport={{ once: true }}
-                >
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div>
-                      <h4 className="font-heading font-semibold dark:text-white text-slate-900">
-                        {edu.degree}
-                      </h4>
-                      <p className="text-accent-400 text-sm font-medium">{edu.institution}</p>
-                    </div>
-                    <span className="flex items-center gap-1 text-xs dark:text-slate-500 text-slate-500 shrink-0">
-                      <Calendar size={11} />
-                      {edu.period}
-                    </span>
+      <div className="grid gap-10 lg:grid-cols-2">
+        <div>
+          <h3 className="mb-4 flex items-center gap-2 text-sm font-medium text-subtle">
+            <GraduationCap size={16} /> {t.education.education}
+          </h3>
+          <div className="space-y-4">
+            {EDUCATION.map((e, i) => {
+              const text = t.education.items[e.id]
+              return (
+                <Reveal as="article" key={e.id} delay={i * 0.05} className="card p-6">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <p className="font-mono text-xs text-subtle">{range(e.start, e.end)}</p>
+                    {e.inProgress && (
+                      <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                        {t.education.inProgress}
+                      </span>
+                    )}
                   </div>
-                  <p className="text-sm dark:text-slate-400 text-slate-600 mb-3">{edu.description}</p>
-                  {edu.highlights && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {edu.highlights.map(h => (
-                        <span key={h} className="tech-badge">{h}</span>
-                      ))}
-                    </div>
-                  )}
-                </motion.div>
-              ))}
-            </div>
-          </div>
-
-          {/* Certifications column */}
-          <div>
-            <div className="flex items-center gap-2 mb-6">
-              <Award className="text-accent-400" size={20} />
-              <h3 className="font-heading font-semibold text-lg dark:text-white text-slate-800">
-                Certifications
-              </h3>
-            </div>
-            <div className="space-y-3">
-              {CERTIFICATIONS.map((cert, i) => (
-                <motion.div
-                  key={cert.id}
-                  className="dark:bg-dark-card bg-light-card border dark:border-dark-border border-light-border rounded-xl p-4 flex items-center gap-4 hover-glow group"
-                  custom={i}
-                  variants={reduced ? {} : cardVariants}
-                  initial="hidden"
-                  whileInView="visible"
-                  viewport={{ once: true }}
-                >
-                  <div className="w-10 h-10 rounded-xl bg-accent-500/15 border border-accent-500/25 flex items-center justify-center shrink-0">
-                    <Award size={18} className="text-accent-400" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm dark:text-white text-slate-900 truncate group-hover:text-accent-400 transition-colors">
-                      {cert.title}
-                    </p>
-                    <p className="text-xs dark:text-slate-500 text-slate-500">
-                      {cert.issuer} · {cert.date}
-                    </p>
-                  </div>
-                  {cert.credentialUrl && (
-                    <a
-                      href={cert.credentialUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-auto shrink-0 text-xs text-accent-400 hover:underline"
-                      aria-label={`View ${cert.title} credential`}
-                    >
-                      View
-                    </a>
-                  )}
-                </motion.div>
-              ))}
-            </div>
+                  <h4 className="mt-2 text-lg font-semibold text-fg">{text.degree}</h4>
+                  <p className="text-[15px] text-accent-text">{e.institution}</p>
+                  <ul className="mt-3 space-y-1.5">
+                    {text.details.map(d => (
+                      <li key={d} className="text-sm leading-relaxed text-muted">
+                        {d}
+                      </li>
+                    ))}
+                  </ul>
+                </Reveal>
+              )
+            })}
           </div>
         </div>
+
+        <div>
+          <h3 className="mb-4 flex items-center gap-2 text-sm font-medium text-subtle">
+            <Award size={16} /> {t.education.certifications}
+          </h3>
+          <ul className="card divide-y divide-line">
+            {CERTIFICATIONS.map((c, i) => (
+              <Reveal as="li" key={c.id} delay={i * 0.04} className="flex items-start justify-between gap-4 p-5">
+                <div className="min-w-0">
+                  <p className="font-medium text-fg">{c.title}</p>
+                  <p className="mt-0.5 text-sm text-muted">{c.issuer}</p>
+                  {t.education.certNotes[c.id] && <p className="mt-1 text-sm text-accent-text">{t.education.certNotes[c.id]}</p>}
+                </div>
+                <p className="shrink-0 font-mono text-xs text-subtle">{date(c.date)}</p>
+              </Reveal>
+            ))}
+          </ul>
+        </div>
       </div>
-    </section>
+    </Section>
   )
 }

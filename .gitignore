@@ -1,6 +1,41 @@
+# Dependencies & build output
 node_modules/
-.env
-.env.local
-.env.production
 dist/
 build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Editors & OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# AI assistant files
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+AGENTS.md
+GEMINI.md
+.cursor/
+.cursorrules
+.cursorignore
+.windsurf/
+.windsurfrules
+.aider*
+.continue/
+.codeium/
+.copilot/
+.github/copilot-instructions.md
+.codex/
+.gemini/
+.roo/
+.clinerules
+.kiro/

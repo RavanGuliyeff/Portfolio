@@ -1,188 +1,124 @@
-import React, { Suspense, lazy } from 'react'
+import { Suspense, lazy } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, ArrowRight, Download } from 'lucide-react'
-import { Button } from '@/components/ui/Button'
-import { Typewriter } from '@/components/shared/AnimatedText'
+import { ArrowRight, Download, Github, Linkedin, MapPin } from 'lucide-react'
+import { ButtonLink } from '@/components/ui/Button'
 import { OWNER } from '@/constants/portfolio'
-import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { useI18n } from '@/i18n/I18nProvider'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { useIdle } from '@/hooks/useIdle'
 
-const LaptopScene = lazy(() =>
-  import('@/three/LaptopScene').then(m => ({ default: m.LaptopScene }))
-)
+const LaptopScene = lazy(() => import('@/three/LaptopScene'))
 
-const fadeUp = {
-  hidden:  { opacity: 0, y: 32 },
-  visible: (d: number) => ({
-    opacity: 1, y: 0,
-    transition: { duration: 0.65, delay: d, ease: [0.4, 0, 0.2, 1] as const },
-  }),
-}
+const rise = (delay: number) => ({
+  initial: { opacity: 0, y: 18 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.6, delay, ease: [0.22, 1, 0.36, 1] as const },
+})
 
-export const Hero: React.FC = () => {
-  const reduced = usePrefersReducedMotion()
+export function Hero() {
+  const isDesktop = useMediaQuery('(min-width: 1024px)')
+  const idle = useIdle()
+  const show3d = isDesktop && idle
+  const { t } = useI18n()
 
   return (
-    <section
-      id="hero"
-      className="relative min-h-screen flex flex-col overflow-hidden noise-overlay"
-      aria-label="Hero section"
-    >
-      {/* Background layers */}
-      <div className="absolute inset-0 dark:bg-dark-bg bg-light-bg" />
-      <div className="absolute inset-0 bg-gradient-radial from-accent-950/40 via-transparent to-transparent" />
-      <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t dark:from-dark-bg from-light-bg to-transparent z-10" />
+    <section id="top" aria-label="Introduction" className="relative overflow-hidden pt-16">
+      <div className="bg-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden="true" />
+      <div
+        className="pointer-events-none absolute -top-40 left-1/2 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-accent/15 blur-[120px]"
+        aria-hidden="true"
+      />
 
-      {/* Two-column layout */}
-      <div className="relative z-10 flex-1 flex items-center section-container">
-        <div className="w-full grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-6 items-center min-h-screen pt-24 pb-16 lg:pt-0 lg:pb-0">
-
-          {/* Left — content */}
-          <div className="flex flex-col items-start">
-            {/* Status badge */}
-            <motion.div
-              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-mono
-                dark:bg-dark-card bg-light-card border dark:border-dark-border border-light-border
-                dark:text-slate-400 text-slate-600 mb-8"
-              custom={0}
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              Available for projects &amp; opportunities
-            </motion.div>
-
-            {/* Name */}
-            <motion.h1
-              className="font-heading font-black text-5xl sm:text-6xl md:text-7xl leading-none mb-4 tracking-tight"
-              custom={0.15}
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
-            >
-              <span className="dark:text-white text-slate-900">{OWNER.name.split(' ')[0]}{' '}</span>
-              <span className="gradient-text">{OWNER.name.split(' ')[1]}</span>
-            </motion.h1>
-
-            {/* Typewriter title */}
-            <motion.div
-              className="font-heading text-xl sm:text-2xl md:text-3xl mb-6 dark:text-slate-300 text-slate-700 min-h-[2.5rem]"
-              custom={0.3}
-              variants={reduced ? {} : fadeUp}
-              initial="hidden"
-              animate="visible"
-            >
-              <Typewriter
-                words={[
-                  'Backend Developer',
-                  '.NET / C# Specialist',
-                  'Clean Architecture Advocate',
-                  'Competitive Programmer',
-                  'Mentor & Instructor',
-                ]}
-              />
-            </motion.div>
-
-            {/* Tagline */}
+      <div className="container-page relative">
+        <div className="grid items-center gap-10 py-16 lg:min-h-[calc(100svh-12.5rem)] lg:grid-cols-[1.1fr_1fr] lg:py-8">
+          <div>
             <motion.p
-              className="text-base sm:text-lg dark:text-slate-400 text-slate-600 max-w-lg mb-10 leading-relaxed"
-              custom={0.45}
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
+              {...rise(0)}
+              className="mb-6 inline-flex items-center gap-2 rounded-full border border-line bg-surface/70 px-3 py-1 text-xs text-muted backdrop-blur"
             >
-              {OWNER.summary}
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              {t.hero.available}
             </motion.p>
 
-            {/* CTAs */}
-            <motion.div
-              className="flex flex-wrap items-center gap-4 mb-12"
-              custom={0.6}
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
+            <motion.h1 {...rise(0.05)} className="text-5xl font-bold tracking-tight text-fg sm:text-6xl lg:text-7xl">
+              {OWNER.name}
+            </motion.h1>
+
+            <motion.p
+              {...rise(0.12)}
+              className="mt-5 max-w-2xl text-balance text-xl font-medium leading-snug text-fg/90 sm:text-2xl"
             >
-              <Button
-                variant="primary"
+              {t.hero.headline}
+            </motion.p>
+
+            <motion.p {...rise(0.18)} className="mt-4 max-w-xl text-pretty leading-relaxed text-muted">
+              {t.hero.intro}
+            </motion.p>
+
+            <motion.div {...rise(0.24)} className="mt-8 flex flex-wrap items-center gap-3">
+              <ButtonLink href="#projects" size="lg" iconRight={<ArrowRight size={17} />}>
+                {t.hero.seeWork}
+              </ButtonLink>
+              <ButtonLink
+                href={OWNER.resumeUrl}
+                download="Ravan-Guliyev-CV.pdf"
                 size="lg"
-                icon={<ArrowRight size={18} />}
-                onClick={() => document.getElementById('projects')?.scrollIntoView({ behavior: 'smooth' })}
-                aria-label="View my work"
+                variant="secondary"
+                icon={<Download size={17} />}
               >
-                View My Work
-              </Button>
-              <Button
-                as="a"
-                href="/cv.pdf"
-                download="Ravan-Guliyev_CV.pdf"
-                variant="outline"
-                size="lg"
-                icon={<Download size={18} />}
-                iconPosition="left"
-                aria-label="Download CV"
-              >
-                Download CV
-              </Button>
+                {t.hero.downloadCv}
+              </ButtonLink>
+              <div className="flex items-center gap-1 sm:ml-2">
+                <a
+                  href={OWNER.github}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={t.hero.github}
+                  className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors hover:bg-elevated hover:text-fg"
+                >
+                  <Github size={19} />
+                </a>
+                <a
+                  href={OWNER.linkedin}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={t.hero.linkedin}
+                  className="grid h-11 w-11 place-items-center rounded-xl text-muted transition-colors hover:bg-elevated hover:text-fg"
+                >
+                  <Linkedin size={19} />
+                </a>
+              </div>
             </motion.div>
 
-            {/* Stats row */}
-            <motion.div
-              className="flex flex-wrap gap-8"
-              custom={0.75}
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
-            >
-              {[
-                { val: '3+',  lbl: 'Years Coding'       },
-                { val: '20+', lbl: 'Devs Mentored'      },
-                { val: '3',   lbl: 'Production Projects' },
-                { val: '🏆',  lbl: 'ICPC Qualifier'      },
-              ].map(s => (
-                <div key={s.lbl} className="text-center">
-                  <div className="font-heading font-bold text-2xl gradient-text">{s.val}</div>
-                  <div className="text-xs dark:text-slate-500 text-slate-500 mt-0.5">{s.lbl}</div>
-                </div>
-              ))}
-            </motion.div>
+            <motion.p {...rise(0.3)} className="mt-6 flex items-center gap-1.5 text-sm text-subtle">
+              <MapPin size={14} /> {t.about.facts[0].value}
+            </motion.p>
           </div>
 
-          {/* Right — 3D laptop */}
-          <motion.div
-            className="hidden lg:flex items-center justify-center h-[520px] w-full relative"
-            initial={reduced ? {} : { opacity: 0, scale: 0.92 }}
-            animate={reduced ? {} : { opacity: 1, scale: 1 }}
-            transition={{ duration: 0.9, delay: 0.4, ease: 'easeOut' }}
-          >
-            {/* Ambient glow behind laptop */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="w-72 h-72 rounded-full bg-accent-600/10 blur-[80px]" />
-            </div>
-            <Suspense fallback={
-              <div className="flex flex-col items-center gap-3 dark:text-slate-600 text-slate-400">
-                <div className="w-14 h-14 border-2 border-accent-500/30 border-t-accent-500 rounded-full animate-spin" />
-                <span className="text-xs font-mono">loading 3D…</span>
-              </div>
-            }>
-              <LaptopScene className="absolute inset-0" />
-            </Suspense>
-          </motion.div>
-
+          <div className="relative hidden h-[480px] lg:block xl:-mr-10" aria-hidden="true">
+            {show3d && (
+              <Suspense fallback={null}>
+                <LaptopScene />
+              </Suspense>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Scroll indicator */}
-      <motion.button
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1
-          dark:text-slate-500 text-slate-400 hover:text-accent-400 transition-colors"
-        onClick={() => document.getElementById('about')?.scrollIntoView({ behavior: 'smooth' })}
-        animate={reduced ? {} : { y: [0, 8, 0] }}
-        transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-        aria-label="Scroll to next section"
-      >
-        <span className="text-xs font-mono tracking-wider">scroll</span>
-        <ChevronDown size={20} />
-      </motion.button>
+        <motion.dl
+          {...rise(0.36)}
+          className="mb-16 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line lg:mb-10 lg:grid-cols-4"
+        >
+          {t.metrics.map(m => (
+            <div key={m.label} className="flex flex-col-reverse justify-end bg-surface/90 px-5 py-5 backdrop-blur">
+              <dt className="mt-1 text-sm leading-snug text-muted">{m.label}</dt>
+              <dd className="text-2xl font-semibold tracking-tight text-fg">{m.value}</dd>
+            </div>
+          ))}
+        </motion.dl>
+      </div>
     </section>
   )
 }

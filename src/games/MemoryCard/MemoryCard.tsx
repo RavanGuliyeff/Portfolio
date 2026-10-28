@@ -1,161 +1,172 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { RefreshCw, Timer, Move } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { IconType } from 'react-icons'
+import { SiDocker, SiDotnet, SiGit, SiGithub, SiGraphql, SiJavascript, SiPostgresql, SiRedis } from 'react-icons/si'
+import { isTouchDevice } from '../engine/input'
+import { readBest, recordScore } from '../engine/storage'
+import { GameHud } from '../engine/GameUI'
+import { useI18n } from '@/i18n/I18nProvider'
 
-const EMOJIS = ['🦊', '🐉', '🌙', '⚡', '🎯', '🔮', '🦋', '🚀']
-const SYMBOLS = [...EMOJIS, ...EMOJIS]
+const KEY = 'hs-memory'
 
-interface CardState {
-  id:       number
-  symbol:   string
-  flipped:  boolean
-  matched:  boolean
+const LOGOS: { id: string; icon: IconType; color: string }[] = [
+  { id: 'dotnet', icon: SiDotnet, color: '#7c6cff' },
+  { id: 'postgres', icon: SiPostgresql, color: '#60a5fa' },
+  { id: 'docker', icon: SiDocker, color: '#38bdf8' },
+  { id: 'redis', icon: SiRedis, color: '#f87171' },
+  { id: 'git', icon: SiGit, color: '#fb923c' },
+  { id: 'graphql', icon: SiGraphql, color: '#f472b6' },
+  { id: 'js', icon: SiJavascript, color: '#facc15' },
+  { id: 'github', icon: SiGithub, color: '#e4e4e7' },
+]
+
+interface Card {
+  key: number
+  logo: number
+  matched: boolean
 }
 
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]]
+function deal(): Card[] {
+  const cards = [...LOGOS.keys(), ...LOGOS.keys()].map((logo, key) => ({ key, logo, matched: false }))
+  for (let i = cards.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[cards[i], cards[j]] = [cards[j], cards[i]]
   }
-  return a
+  return cards
 }
 
-function initCards(): CardState[] {
-  return shuffle(SYMBOLS).map((symbol, id) => ({ id, symbol, flipped: false, matched: false }))
-}
+const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
-export const MemoryCard: React.FC = () => {
-  const [cards,    setCards]    = useState<CardState[]>(initCards)
-  const [selected, setSelected] = useState<number[]>([])
-  const [moves,    setMoves]    = useState(0)
-  const [time,     setTime]     = useState(0)
-  const [running,  setRunning]  = useState(false)
-  const [won,      setWon]      = useState(false)
-  const [locked,   setLocked]   = useState(false)
+export function MemoryCard() {
+  const [cards, setCards] = useState(deal)
+  const [open, setOpen] = useState<number[]>([]) // indexes currently face up (max 2)
+  const [moves, setMoves] = useState(0)
+  const [seconds, setSeconds] = useState(0)
+  const [started, setStarted] = useState(false)
+  const [won, setWon] = useState(false)
+  const [best, setBest] = useState(() => readBest(KEY))
+  const [record, setRecord] = useState(false)
+  const hideTimer = useRef<ReturnType<typeof setTimeout>>()
+  const touch = useState(isTouchDevice)[0]
+  const { t: tr } = useI18n()
+  const g$ = tr.game
 
-  // Timer
   useEffect(() => {
-    if (!running) return
-    const id = setInterval(() => setTime(t => t + 1), 1000)
+    if (!started || won) return
+    const id = setInterval(() => setSeconds(s => s + 1), 1000)
     return () => clearInterval(id)
-  }, [running])
+  }, [started, won])
 
-  // Save high score (best = fewest moves)
-  useEffect(() => {
-    if (!won) return
-    const stored = parseInt(localStorage.getItem('hs-memory') ?? '9999', 10)
-    if (moves < stored) localStorage.setItem('hs-memory', String(moves))
-  }, [won, moves])
+  useEffect(() => () => clearTimeout(hideTimer.current), [])
 
-  const flip = useCallback((id: number) => {
-    if (locked || won) return
-    const card = cards[id]
-    if (card.flipped || card.matched) return
+  const flip = useCallback(
+    (index: number) => {
+      if (won || cards[index].matched || open.includes(index)) return
+      if (!started) setStarted(true)
 
-    if (!running) setRunning(true)
+      // A third click while a mismatched pair is showing hides it right away.
+      if (open.length === 2) {
+        clearTimeout(hideTimer.current)
+        setOpen([index])
+        return
+      }
+      const nextOpen = [...open, index]
+      setOpen(nextOpen)
+      if (nextOpen.length < 2) return
 
-    setCards(c => c.map(card => card.id === id ? { ...card, flipped: true } : card))
-    const next = [...selected, id]
-    setSelected(next)
-
-    if (next.length === 2) {
-      setLocked(true)
-      setMoves(m => m + 1)
-      const [a, b] = next
-      if (cards[a].symbol === cards[b].symbol) {
-        setCards(c =>
-          c.map(card => card.id === a || card.id === b ? { ...card, matched: true } : card)
-        )
-        setSelected([])
-        setLocked(false)
-        if (cards.filter(c => !c.matched).length === 2) {
+      const movesNow = moves + 1
+      setMoves(movesNow)
+      const [a, b] = nextOpen
+      if (cards[a].logo === cards[b].logo) {
+        const next = cards.map((c, i) => (i === a || i === b ? { ...c, matched: true } : c))
+        setCards(next)
+        setOpen([])
+        if (next.every(c => c.matched)) {
           setWon(true)
-          setRunning(false)
+          setRecord(best === null || movesNow < best)
+          setBest(recordScore(KEY, movesNow, 'lower'))
         }
       } else {
-        setTimeout(() => {
-          setCards(c =>
-            c.map(card => card.id === a || card.id === b ? { ...card, flipped: false } : card)
-          )
-          setSelected([])
-          setLocked(false)
-        }, 900)
+        hideTimer.current = setTimeout(() => setOpen([]), 800)
       }
-    }
-  }, [cards, selected, locked, won, running])
+    },
+    [cards, open, moves, won, started, best]
+  )
 
   const restart = () => {
-    setCards(initCards())
-    setSelected([])
+    clearTimeout(hideTimer.current)
+    setCards(deal())
+    setOpen([])
     setMoves(0)
-    setTime(0)
-    setRunning(false)
+    setSeconds(0)
+    setStarted(false)
     setWon(false)
-    setLocked(false)
+    setRecord(false)
   }
 
-  const fmtTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-
   return (
-    <div className="flex flex-col items-center gap-4 select-none">
-      {/* Stats */}
-      <div className="flex items-center gap-6 text-sm dark:text-slate-400 text-slate-600">
-        <span className="flex items-center gap-1.5"><Move size={14} /> {moves} moves</span>
-        <span className="flex items-center gap-1.5"><Timer size={14} /> {fmtTime(time)}</span>
-      </div>
+    <div>
+      <GameHud
+        stats={[
+          { label: g$.moves, value: moves },
+          { label: g$.time, value: fmt(seconds) },
+          { label: g$.best, value: best ?? '—' },
+        ]}
+        onRestart={restart}
+      />
+      <div className="flex justify-center">
+        <div
+          className="relative grid grid-cols-4 gap-2 sm:gap-3"
+          style={{ width: `min(100%, 480px, calc(100dvh - ${touch ? 240 : 220}px))`, minWidth: 240 }}
+        >
+          {cards.map((card, i) => {
+            const faceUp = card.matched || open.includes(i)
+            const { icon: Icon, color } = LOGOS[card.logo]
+            return (
+              <button
+                key={card.key}
+                type="button"
+                onClick={() => flip(i)}
+                className="aspect-square [perspective:600px]"
+                aria-label={faceUp ? LOGOS[card.logo].id : g$.memory.hidden}
+                disabled={card.matched}
+              >
+                <div
+                  className="relative h-full w-full transition-transform duration-300 [transform-style:preserve-3d]"
+                  style={{ transform: faceUp ? 'rotateY(180deg)' : 'none' }}
+                >
+                  <div className="absolute inset-0 grid place-items-center rounded-xl border border-line bg-elevated [backface-visibility:hidden] hover:border-accent/50">
+                    <span className="h-2 w-2 rounded-full bg-accent/50" />
+                  </div>
+                  <div
+                    className={`absolute inset-0 grid place-items-center rounded-xl border bg-[#141418] [backface-visibility:hidden] [transform:rotateY(180deg)] ${
+                      card.matched ? 'border-emerald-500/50' : 'border-line'
+                    }`}
+                  >
+                    <Icon style={{ color, width: '45%', height: '45%' }} />
+                  </div>
+                </div>
+              </button>
+            )
+          })}
 
-      {/* Grid */}
-      <div className="grid grid-cols-4 gap-2">
-        {cards.map(card => (
-          <motion.button
-            key={card.id}
-            className={`w-14 h-14 sm:w-16 sm:h-16 rounded-xl text-2xl flex items-center justify-center
-              border font-heading font-bold transition-colors
-              ${card.matched
-                ? 'dark:bg-accent-900/30 bg-accent-100 border-accent-500/40 cursor-default'
-                : 'dark:bg-dark-border bg-light-border border-transparent hover:border-accent-500/50 cursor-pointer'
-              }`}
-            onClick={() => flip(card.id)}
-            animate={{ rotateY: card.flipped || card.matched ? 0 : 180 }}
-            transition={{ duration: 0.25 }}
-            aria-label={card.flipped || card.matched ? card.symbol : 'Hidden card'}
-          >
-            {(card.flipped || card.matched) ? card.symbol : ''}
-          </motion.button>
-        ))}
-      </div>
-
-      {/* Win overlay */}
-      <AnimatePresence>
-        {won && (
-          <motion.div
-            className="absolute inset-0 dark:bg-dark-card/95 bg-light-card/95 flex flex-col items-center justify-center gap-4 rounded-2xl z-10"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <div className="text-4xl">🎉</div>
-            <div className="font-heading font-bold text-xl dark:text-white text-slate-900">You won!</div>
-            <div className="text-sm dark:text-slate-400 text-slate-600">
-              {moves} moves · {fmtTime(time)}
+          {won && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-xl bg-black/65 text-center backdrop-blur-[2px]">
+              <p className="text-2xl font-semibold text-white">{g$.memory.allFound}</p>
+              <p className="text-sm text-white/75">
+                {g$.memory.result(moves, fmt(seconds))}
+                {record ? g$.newBest : ''}
+              </p>
+              <button
+                type="button"
+                onClick={restart}
+                className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-zinc-900"
+              >
+                {g$.playAgain}
+              </button>
             </div>
-            <button
-              onClick={restart}
-              className="flex items-center gap-2 px-5 py-2 rounded-xl bg-accent-500 text-white text-sm font-medium hover:bg-accent-600 transition-colors"
-            >
-              <RefreshCw size={14} /> Play Again
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <button
-        onClick={restart}
-        className="flex items-center gap-1.5 text-xs dark:text-slate-500 text-slate-500 hover:text-accent-400 transition-colors"
-        aria-label="Restart memory card game"
-      >
-        <RefreshCw size={12} /> Restart
-      </button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

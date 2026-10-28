@@ -10,14 +10,14 @@ export default defineConfig({
     },
   },
   build: {
-    chunkSizeWarningLimit: 1000,
+    target: 'es2020',
     rollupOptions: {
       output: {
+        // three.js only loads with the hero scene, so keep it out of the main bundle.
         manualChunks: {
-          'vendor-react':   ['react', 'react-dom'],
-          'vendor-framer':  ['framer-motion'],
-          'vendor-three':   ['three', '@react-three/fiber', '@react-three/drei'],
-          'vendor-emailjs': ['@emailjs/browser'],
+          react: ['react', 'react-dom'],
+          motion: ['framer-motion'],
+          three: ['three', '@react-three/fiber'],
         },
       },
     },

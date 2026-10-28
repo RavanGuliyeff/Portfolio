@@ -1,277 +1,244 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { useCallback, useRef, useState } from 'react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from 'lucide-react'
+import { useCanvas } from '../engine/useCanvas'
+import { useGameLoop } from '../engine/useGameLoop'
+import { isTouchDevice, useKeyboard, useSwipe } from '../engine/input'
+import { readBest, recordScore } from '../engine/storage'
+import { GameButton, GameHud, Overlay, Stage } from '../engine/GameUI'
+import { useI18n } from '@/i18n/I18nProvider'
 
-const COLS  = 20
-const ROWS  = 18
-const CELL  = 22
-const W     = COLS * CELL
-const H     = ROWS * CELL
-const BASE_SPEED  = 130   // ms per tick
-const MIN_SPEED   = 55    // fastest
+const COLS = 20
+const ROWS = 15
+const CELL = 30
+const W = COLS * CELL
+const H = ROWS * CELL
+const KEY = 'hs-snake'
 
-// Polyfill for roundRect (not in all browsers)
-function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath()
-  ctx.moveTo(x + r, y)
-  ctx.lineTo(x + w - r, y)
-  ctx.arcTo(x + w, y, x + w, y + r, r)
-  ctx.lineTo(x + w, y + h - r)
-  ctx.arcTo(x + w, y + h, x + w - r, y + h, r)
-  ctx.lineTo(x + r, y + h)
-  ctx.arcTo(x, y + h, x, y + h - r, r)
-  ctx.lineTo(x, y + r)
-  ctx.arcTo(x, y, x + r, y, r)
-  ctx.closePath()
-}
-
-type Dir = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT'
+type Dir = 'up' | 'down' | 'left' | 'right'
 type Point = { x: number; y: number }
+type Phase = 'ready' | 'playing' | 'paused' | 'over'
 
-function randFood(snake: Point[]): Point {
-  let p: Point
-  do {
-    p = { x: Math.floor(Math.random() * COLS), y: Math.floor(Math.random() * ROWS) }
-  } while (snake.some(s => s.x === p.x && s.y === p.y))
-  return p
+const VEC: Record<Dir, Point> = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } }
+const OPPOSITE: Record<Dir, Dir> = { up: 'down', down: 'up', left: 'right', right: 'left' }
+const KEYMAP: Record<string, Dir> = {
+  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+  w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right',
 }
 
-export const Snake: React.FC = () => {
-  const canvasRef  = useRef<HTMLCanvasElement>(null)
-  const gameRef    = useRef({
-    snake:  [{ x: 10, y: 9 }] as Point[],
-    dir:    'RIGHT' as Dir,
-    nextDir:'RIGHT' as Dir,
-    food:   { x: 15, y: 9 } as Point,
-    score:  0,
-    dead:   false,
-    started: false,
-  })
-  const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null)
+function placeFood(snake: Point[]): Point {
+  const free: Point[] = []
+  for (let x = 0; x < COLS; x++)
+    for (let y = 0; y < ROWS; y++) if (!snake.some(s => s.x === x && s.y === y)) free.push({ x, y })
+  return free[Math.floor(Math.random() * free.length)] ?? { x: 0, y: 0 }
+}
+
+function initialState() {
+  const snake = [{ x: 6, y: 7 }, { x: 5, y: 7 }, { x: 4, y: 7 }]
+  return {
+    snake,
+    prev: snake.map(p => ({ ...p })),
+    dir: 'right' as Dir,
+    queue: [] as Dir[],
+    food: placeFood(snake),
+    score: 0,
+    stepTime: 0.12,
+    acc: 0,
+    time: 0,
+    flash: 0,
+  }
+}
+
+export function Snake() {
+  const { canvasRef, ctxRef } = useCanvas(W, H)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const game = useRef(initialState())
+  const phaseRef = useRef<Phase>('ready')
+  const [phase, setPhaseState] = useState<Phase>('ready')
   const [score, setScore] = useState(0)
-  const [dead,  setDead]  = useState(false)
-  const [started, setStarted] = useState(false)
+  const [best, setBest] = useState(() => readBest(KEY) ?? 0)
+  const [record, setRecord] = useState(false)
+  const touch = useState(isTouchDevice)[0]
+  const { t: tr } = useI18n()
+  const g$ = tr.game
 
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const { snake, food, score: sc, dead: dead_, started: st } = gameRef.current
+  const setPhase = (p: Phase) => {
+    phaseRef.current = p
+    setPhaseState(p)
+  }
 
-    ctx.fillStyle = '#0a0a0f'
-    ctx.fillRect(0, 0, W, H)
-
-    // Grid dots
-    ctx.fillStyle = 'rgba(124,58,237,0.07)'
-    for (let x = 0; x < COLS; x++)
-      for (let y = 0; y < ROWS; y++)
-        ctx.fillRect(x * CELL + CELL / 2 - 1, y * CELL + CELL / 2 - 1, 2, 2)
-
-    // Snake body (head = bright, tail = dim)
-    snake.forEach((seg, i) => {
-      const alpha = 1.0 - (i / Math.max(snake.length, 1)) * 0.55
-      ctx.fillStyle = `rgba(124, 58, 237, ${alpha})`
-      roundedRect(ctx, seg.x * CELL + 2, seg.y * CELL + 2, CELL - 4, CELL - 4, 4)
-      ctx.fill()
-    })
-    // Head — bright highlight with eyes
-    if (snake.length > 0) {
-      const hx = snake[0].x * CELL
-      const hy = snake[0].y * CELL
-      ctx.fillStyle = '#a78bfa'
-      roundedRect(ctx, hx + 2, hy + 2, CELL - 4, CELL - 4, 5)
-      ctx.fill()
-      // eyes
-      ctx.fillStyle = '#0a0a0f'
-      const g0 = gameRef.current
-      const eyeOff = g0.dir === 'RIGHT' ? [CELL - 7, 5, CELL - 7, CELL - 9]
-                   : g0.dir === 'LEFT'  ? [3, 5, 3, CELL - 9]
-                   : g0.dir === 'UP'    ? [5, 3, CELL - 9, 3]
-                                        : [5, CELL - 7, CELL - 9, CELL - 7]
-      ctx.fillRect(hx + eyeOff[0], hy + eyeOff[1], 3, 3)
-      ctx.fillRect(hx + eyeOff[2], hy + eyeOff[3], 3, 3)
-    }
-
-    // Food
-    ctx.fillStyle = '#dc2626'
-    ctx.beginPath()
-    ctx.arc(food.x * CELL + CELL / 2, food.y * CELL + CELL / 2, CELL / 2 - 3, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#fca5a5'
-    ctx.beginPath()
-    ctx.arc(food.x * CELL + CELL / 2 - 2, food.y * CELL + CELL / 2 - 2, 3, 0, Math.PI * 2)
-    ctx.fill()
-
-    // Score
-    ctx.fillStyle = '#7c3aed'
-    ctx.font = '12px JetBrains Mono, monospace'
-    ctx.fillText(`${sc}`, 8, 16)
-
-    if (!st) {
-      ctx.fillStyle = 'rgba(0,0,0,0.6)'
-      ctx.fillRect(0, 0, W, H)
-      ctx.fillStyle = '#f1f5f9'
-      ctx.font = '14px Space Grotesk, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText('Arrow keys / WASD to start', W / 2, H / 2)
-      ctx.textAlign = 'left'
-    }
-
-    if (dead_) {
-      ctx.fillStyle = 'rgba(0,0,0,0.65)'
-      ctx.fillRect(0, 0, W, H)
-      ctx.fillStyle = '#f1f5f9'
-      ctx.font = 'bold 20px Space Grotesk, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText('Game Over!', W / 2, H / 2 - 12)
-      ctx.font = '12px JetBrains Mono, monospace'
-      ctx.fillText(`Score: ${sc} · Press R to restart`, W / 2, H / 2 + 12)
-      ctx.textAlign = 'left'
-    }
+  const restart = useCallback(() => {
+    game.current = initialState()
+    setScore(0)
+    setPhase('playing')
   }, [])
 
-  const tick = useCallback(() => {
-    const g = gameRef.current
-    if (g.dead || !g.started) return
+  const turn = useCallback(
+    (dir: Dir) => {
+      const g = game.current
+      if (phaseRef.current === 'ready') setPhase('playing')
+      if (phaseRef.current !== 'playing') return
+      const last = g.queue[g.queue.length - 1] ?? g.dir
+      if (dir !== last && dir !== OPPOSITE[last] && g.queue.length < 3) g.queue.push(dir)
+    },
+    []
+  )
 
-    g.dir = g.nextDir
-    const head = g.snake[0]
-    const next: Point = {
-      x: (head.x + (g.dir === 'RIGHT' ? 1 : g.dir === 'LEFT' ? -1 : 0) + COLS) % COLS,
-      y: (head.y + (g.dir === 'DOWN'  ? 1 : g.dir === 'UP'   ? -1 : 0) + ROWS) % ROWS,
+  useKeyboard(e => {
+    const dir = KEYMAP[e.key]
+    if (dir) return turn(dir)
+    if (e.key === 'p' || e.key === 'P') {
+      if (phaseRef.current === 'playing') setPhase('paused')
+      else if (phaseRef.current === 'paused') setPhase('playing')
     }
+    if ((e.key === ' ' || e.key === 'Enter' || e.key === 'r' || e.key === 'R') && phaseRef.current !== 'playing') {
+      if (phaseRef.current === 'paused') setPhase('playing')
+      else restart()
+    }
+  })
 
-    // Wall collision (wrap-around is implemented above, so collision is with self)
-    if (g.snake.some(s => s.x === next.x && s.y === next.y)) {
-      g.dead = true
-      const stored = parseInt(localStorage.getItem('hs-snake') ?? '0', 10)
-      if (g.score > stored) localStorage.setItem('hs-snake', String(g.score))
-      setDead(true)
-      draw()
+  useSwipe(stageRef, d => turn(d))
+
+  const advance = () => {
+    const g = game.current
+    const next = g.queue.shift()
+    if (next) g.dir = next
+    const head = g.snake[0]
+    const v = VEC[g.dir]
+    // Walls wrap around: leaving one side brings you back on the other.
+    const nh = { x: (head.x + v.x + COLS) % COLS, y: (head.y + v.y + ROWS) % ROWS }
+    const eating = nh.x === g.food.x && nh.y === g.food.y
+    const body = eating ? g.snake : g.snake.slice(0, -1)
+
+    if (body.some(s => s.x === nh.x && s.y === nh.y)) {
+      g.flash = 1
+      setPhase('over')
+      setRecord(g.score > (readBest(KEY) ?? 0))
+      setBest(recordScore(KEY, g.score))
       return
     }
 
-    g.snake.unshift(next)
-    if (next.x === g.food.x && next.y === g.food.y) {
-      g.score++
+    g.prev = g.snake.map(p => ({ ...p }))
+    g.snake = [nh, ...body]
+    if (eating) {
+      g.score += 1
+      g.stepTime = Math.max(0.055, 0.12 - g.score * 0.0025)
+      g.food = placeFood(g.snake)
       setScore(g.score)
-      g.food = randFood(g.snake)
-      // Speed up every 5 points
-      if (g.score % 5 === 0 && timerRef.current) {
-        clearInterval(timerRef.current)
-        const newSpeed = Math.max(MIN_SPEED, BASE_SPEED - g.score * 3)
-        timerRef.current = setInterval(tick, newSpeed)
-      }
-    } else {
-      g.snake.pop()
     }
-    draw()
-  }, [draw])
+  }
 
-  const restart = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current)
-    const g = gameRef.current
-    g.snake   = [{ x: 10, y: 9 }]
-    g.dir     = 'RIGHT'
-    g.nextDir = 'RIGHT'
-    g.food    = { x: 15, y: 9 }
-    g.score   = 0
-    g.dead    = false
-    g.started = false
-    setScore(0)
-    setDead(false)
-    setStarted(false)
-    draw()
-    timerRef.current = setInterval(tick, BASE_SPEED)
-  }, [tick, draw])
-
-  useEffect(() => {
-    draw()
-    timerRef.current = setInterval(tick, BASE_SPEED)
-
-    const onKey = (e: KeyboardEvent) => {
-      const g = gameRef.current
-      if (e.key === 'r' || e.key === 'R') { restart(); return }
-
-      const map: Record<string, Dir> = {
-        ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
-        w: 'UP', s: 'DOWN', a: 'LEFT', d: 'RIGHT',
-        W: 'UP', S: 'DOWN', A: 'LEFT', D: 'RIGHT',
+  useGameLoop(
+    dt => {
+      const g = game.current
+      g.time += dt
+      g.flash = Math.max(0, g.flash - dt * 2)
+      if (phaseRef.current !== 'playing') return
+      g.acc += dt
+      while (g.acc >= g.stepTime && phaseRef.current === 'playing') {
+        g.acc -= g.stepTime
+        advance()
       }
-      const dir = map[e.key]
-      if (!dir) return
-      e.preventDefault()
+    },
+    () => {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      const g = game.current
+      const t = phaseRef.current === 'playing' ? g.acc / g.stepTime : phaseRef.current === 'ready' ? 0 : 1
 
-      const opposite: Record<Dir, Dir> = { UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT' }
-      if (dir !== opposite[g.dir]) {
-        g.nextDir = dir
-        if (!g.started) { g.started = true; setStarted(true) }
+      ctx.fillStyle = '#0c0f0d'
+      ctx.fillRect(0, 0, W, H)
+      // checkerboard
+      ctx.fillStyle = '#101512'
+      for (let x = 0; x < COLS; x++)
+        for (let y = 0; y < ROWS; y++) if ((x + y) % 2 === 0) ctx.fillRect(x * CELL, y * CELL, CELL, CELL)
+
+      // food
+      const pulse = 1 + Math.sin(g.time * 6) * 0.08
+      const fx = g.food.x * CELL + CELL / 2
+      const fy = g.food.y * CELL + CELL / 2
+      ctx.fillStyle = 'rgba(248,113,113,0.18)'
+      ctx.beginPath()
+      ctx.arc(fx, fy, CELL * 0.5 * pulse, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#f87171'
+      ctx.beginPath()
+      ctx.arc(fx, fy, CELL * 0.3 * pulse, 0, Math.PI * 2)
+      ctx.fill()
+
+      // snake, drawn as one smooth stroke through interpolated segment centres
+      const pts = g.snake.map((p, i) => {
+        let from = g.prev[i] ?? g.prev[g.prev.length - 1]
+        // A segment that just wrapped through a wall jumps instead of sliding across the board.
+        if (Math.abs(from.x - p.x) > 1 || Math.abs(from.y - p.y) > 1) from = p
+        return {
+          x: (from.x + (p.x - from.x) * t) * CELL + CELL / 2,
+          y: (from.y + (p.y - from.y) * t) * CELL + CELL / 2,
+        }
+      })
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      const dead = phaseRef.current === 'over'
+      for (let i = pts.length - 1; i > 0; i--) {
+        const k = i / pts.length
+        ctx.strokeStyle = dead ? `rgba(239,68,68,${1 - k * 0.5})` : `hsl(${142 - k * 30} 70% ${50 - k * 18}%)`
+        ctx.lineWidth = CELL * (0.74 - k * 0.22)
+        ctx.beginPath()
+        ctx.moveTo(pts[i].x, pts[i].y)
+        // Across a wall wrap the two points are far apart: draw dots instead of a line.
+        if (Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) > CELL * 1.5) ctx.lineTo(pts[i].x + 0.01, pts[i].y)
+        else ctx.lineTo(pts[i - 1].x, pts[i - 1].y)
+        ctx.stroke()
+      }
+      const h = pts[0]
+      ctx.fillStyle = dead ? '#ef4444' : '#4ade80'
+      ctx.beginPath()
+      ctx.arc(h.x, h.y, CELL * 0.4, 0, Math.PI * 2)
+      ctx.fill()
+      // eyes
+      const v = VEC[g.dir]
+      const ex = -v.y * CELL * 0.17
+      const ey = v.x * CELL * 0.17
+      ctx.fillStyle = '#0c0f0d'
+      for (const s of [1, -1]) {
+        ctx.beginPath()
+        ctx.arc(h.x + v.x * CELL * 0.12 + ex * s, h.y + v.y * CELL * 0.12 + ey * s, CELL * 0.07, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      if (g.flash > 0) {
+        ctx.fillStyle = `rgba(239,68,68,${g.flash * 0.25})`
+        ctx.fillRect(0, 0, W, H)
       }
     }
+  )
 
-    window.addEventListener('keydown', onKey)
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [tick, draw, restart])
+  const overlay =
+    phase === 'ready' ? (
+      <Overlay title={tr.arcade.games.snake.title} subtitle={touch ? g$.snake.hintTouch : g$.snake.hintKeys} action={g$.start} onAction={restart} />
+    ) : phase === 'paused' ? (
+      <Overlay title={g$.paused} action={g$.resume} onAction={() => setPhase('playing')} />
+    ) : phase === 'over' ? (
+      <Overlay title={g$.gameOver} subtitle={g$.snake.result(score) + (record ? g$.newBest : '')} action={g$.playAgain} onAction={restart} />
+    ) : null
 
   return (
-    <div className="flex flex-col items-center gap-3 select-none">
-      <canvas
-        ref={canvasRef}
-        width={W}
-        height={H}
-        className="rounded-xl border dark:border-dark-border border-light-border w-full max-w-[400px]"
-        style={{ touchAction: 'none' }}
-        aria-label="Snake game canvas"
-      />
-      {/* Mobile controls */}
-      <div className="grid grid-cols-3 gap-1 mt-1">
-        {[
-          ['', '↑', ''],
-          ['←', '', '→'],
-          ['', '↓', ''],
-        ].flatMap((row, ri) =>
-          row.map((cell, ci) => (
-            cell ? (
-              <button
-                key={`${ri}-${ci}`}
-                className="w-8 h-8 rounded-lg dark:bg-dark-border bg-light-border text-sm dark:text-slate-300 text-slate-700 hover:bg-accent-500/20 transition-colors"
-                onClick={() => {
-                  const g = gameRef.current
-                  const map: Record<string, Dir> = { '↑': 'UP', '↓': 'DOWN', '←': 'LEFT', '→': 'RIGHT' }
-                  const dir = map[cell]
-                  if (!dir) return
-                  const opposite: Record<Dir, Dir> = { UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT' }
-                  if (dir !== opposite[g.dir]) {
-                    g.nextDir = dir
-                    if (!g.started) { g.started = true; setStarted(true) }
-                  }
-                }}
-                aria-label={`Move ${cell}`}
-              >
-                {cell}
-              </button>
-            ) : (
-              <div key={`${ri}-${ci}`} className="w-8 h-8" />
-            )
-          ))
-        )}
+    <div>
+      <GameHud stats={[{ label: g$.score, value: score }, { label: g$.best, value: best }]} onRestart={restart} />
+      <div ref={stageRef}>
+        <Stage ratio={W / H} reserve={touch ? 360 : 220} overlay={overlay}>
+          <canvas ref={canvasRef} className="block h-full w-full" aria-label="Snake game board" />
+        </Stage>
       </div>
-      <div className="flex items-center gap-6 text-sm dark:text-slate-400 text-slate-600">
-        <span className="font-mono">Score: <span className="text-accent-400 font-semibold">{score}</span></span>
-        <span className="font-mono text-xs dark:text-slate-500 text-slate-500">
-          Best: <span className="text-emerald-400">{localStorage.getItem('hs-snake') ?? 0}</span>
-        </span>
-      </div>
-      <button
-        onClick={restart}
-        className="flex items-center gap-1.5 text-xs dark:text-slate-500 text-slate-500 hover:text-accent-400 transition-colors"
-        aria-label="Restart snake"
-      >
-        <RefreshCw size={12} /> Restart (R)
-      </button>
+      {touch && (
+        <div className="mx-auto mt-4 grid w-44 grid-cols-3 gap-2">
+          <span />
+          <GameButton label={g$.up} onPress={() => turn('up')}><ArrowUp size={20} /></GameButton>
+          <span />
+          <GameButton label={g$.left} onPress={() => turn('left')}><ArrowLeft size={20} /></GameButton>
+          <GameButton label={g$.down} onPress={() => turn('down')}><ArrowDown size={20} /></GameButton>
+          <GameButton label={g$.right} onPress={() => turn('right')}><ArrowRight size={20} /></GameButton>
+        </div>
+      )}
     </div>
   )
 }

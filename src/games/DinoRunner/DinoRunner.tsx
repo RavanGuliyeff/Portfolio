@@ -1,273 +1,334 @@
-import React, { useRef, useEffect, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { useCallback, useRef, useState } from 'react'
+import { ArrowDown, ArrowUp } from 'lucide-react'
+import { useCanvas } from '../engine/useCanvas'
+import { useGameLoop } from '../engine/useGameLoop'
+import { isTouchDevice, useKeyboard } from '../engine/input'
+import { readBest, recordScore } from '../engine/storage'
+import { GameButton, GameHud, Overlay, Stage } from '../engine/GameUI'
+import { useI18n } from '@/i18n/I18nProvider'
 
-const W        = 600
-const H        = 160
-const GROUND_Y = 128
-const DINO_W   = 26
-const DINO_H   = 34
-const DINO_X   = 54
-const OBS_W    = 16
-const OBS_MIN  = 30
-const OBS_MAX  = 56
-const GRAVITY  = 0.6
-const JUMP_V   = -13.5
+const W = 800
+const H = 280
+const GROUND = 232
+const KEY = 'hs-dino'
 
-interface Obstacle { x: number; height: number }
+const PLAYER_X = 90
+const RUN = { w: 40, h: 50 }
+const DUCK = { w: 56, h: 30 }
+const GRAVITY = 2700
+const JUMP_VELOCITY = -760 // tap ≈ 105px high
+const HOLD_GRAVITY = 0.72 // holding the key on the way up ≈ 150px high
+const COYOTE = 0.08
+const BUFFER = 0.12
+const START_SPEED = 430
+const MAX_SPEED = 1050
 
-interface GS {
-  running:   boolean
-  dead:      boolean
-  score:     number
-  speed:     number
-  vy:        number
-  dinoY:     number
-  obstacles: Obstacle[]
-  frame:     0 | 1
-  nextObs:   number
-  distance:  number
+type Phase = 'ready' | 'playing' | 'over'
+interface Obstacle {
+  kind: 'cactus' | 'bird'
+  x: number
+  y: number
+  w: number
+  h: number
 }
 
-function initGS(): GS {
+function newState() {
   return {
-    running: false, dead: false, score: 0, speed: 4.5,
-    vy: 0, dinoY: GROUND_Y - DINO_H,
-    obstacles: [], frame: 0, nextObs: 90, distance: 0,
+    y: GROUND - RUN.h,
+    vy: 0,
+    onGround: true,
+    ducking: false,
+    jumpHeld: false,
+    coyote: 0,
+    buffer: 0,
+    speed: START_SPEED,
+    distance: 0,
+    obstacles: [] as Obstacle[],
+    nextGap: 500,
+    time: 0,
+    milestoneFlash: 0,
+    stars: Array.from({ length: 40 }, () => ({ x: Math.random() * W, y: Math.random() * (GROUND - 60), s: Math.random() * 1.5 + 0.5 })),
+    pebbles: Array.from({ length: 24 }, () => ({ x: Math.random() * W, y: GROUND + 8 + Math.random() * 30, w: Math.random() * 6 + 2 })),
   }
 }
 
-// Draw a blocky dino with ctx
-function drawDino(ctx: CanvasRenderingContext2D, y: number, legFrame: 0 | 1, dead: boolean) {
-  const x = DINO_X
-  ctx.fillStyle = dead ? '#ef4444' : '#9b6af5'
-  // body
-  ctx.fillRect(x, y + 10, DINO_W, DINO_H - 16)
-  // head
-  ctx.fillRect(x + 4, y, DINO_W - 2, 16)
-  // mouth / eye
-  ctx.fillStyle = '#0a0a0f'
-  ctx.fillRect(x + DINO_W - 6, y + 3, 4, 4)   // eye
-  if (dead) {
-    ctx.fillStyle = '#fca5a5'
-    ctx.fillRect(x + DINO_W - 8, y + 9, 6, 2) // X-eye when dead
-    ctx.fillRect(x + DINO_W - 6, y + 7, 2, 6)
+export function DinoRunner() {
+  const { canvasRef, ctxRef } = useCanvas(W, H)
+  const s = useRef(newState())
+  const phaseRef = useRef<Phase>('ready')
+  const [phase, setPhaseState] = useState<Phase>('ready')
+  const [score, setScore] = useState(0)
+  const [best, setBest] = useState(() => readBest(KEY) ?? 0)
+  const [record, setRecord] = useState(false)
+  const touch = useState(isTouchDevice)[0]
+  const { t: tr } = useI18n()
+  const g$ = tr.game
+
+  const setPhase = (p: Phase) => {
+    phaseRef.current = p
+    setPhaseState(p)
   }
-  // tail
-  ctx.fillStyle = dead ? '#ef4444' : '#9b6af5'
-  ctx.fillRect(x - 6, y + 14, 8, 6)
-  // legs
-  const onGround = y >= GROUND_Y - DINO_H
-  if (onGround && !dead) {
-    if (legFrame === 0) {
-      ctx.fillRect(x + 2,  y + DINO_H - 8, 8, 8)
-      ctx.fillRect(x + 14, y + DINO_H - 4, 8, 4)
-    } else {
-      ctx.fillRect(x + 2,  y + DINO_H - 4, 8, 4)
-      ctx.fillRect(x + 14, y + DINO_H - 8, 8, 8)
+
+  const start = useCallback(() => {
+    s.current = newState()
+    setScore(0)
+    setRecord(false)
+    setPhase('playing')
+  }, [])
+
+  const jumpDown = () => {
+    if (phaseRef.current === 'ready') start()
+    else if (phaseRef.current === 'over') return start()
+    s.current.jumpHeld = true
+    s.current.buffer = BUFFER
+  }
+  const jumpUp = () => {
+    s.current.jumpHeld = false
+  }
+  const duck = (on: boolean) => {
+    s.current.ducking = on
+  }
+
+  useKeyboard(
+    e => {
+      if (e.repeat) return
+      if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') jumpDown()
+      if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') duck(true)
+      if ((e.key === 'Enter' || e.key === 'r' || e.key === 'R') && phaseRef.current !== 'playing') start()
+    },
+    e => {
+      if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') jumpUp()
+      if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') duck(false)
     }
-  } else {
-    ctx.fillRect(x + 2,  y + DINO_H - 8, 8, 6)
-    ctx.fillRect(x + 14, y + DINO_H - 8, 8, 6)
+  )
+
+  const spawn = () => {
+    const st = s.current
+    const score = Math.floor(st.distance / 10)
+    const birdChance = score > 250 ? 0.3 : 0
+    if (Math.random() < birdChance) {
+      // low: jump over it · middle: duck under it · high: just keep running
+      const tops = [GROUND - 36, GROUND - 62, GROUND - 116]
+      st.obstacles.push({ kind: 'bird', x: W + 20, y: tops[Math.floor(Math.random() * tops.length)], w: 42, h: 26 })
+    } else {
+      const count = score > 150 && Math.random() < 0.35 ? 2 + Math.floor(Math.random() * 2) : 1
+      let x = W + 20
+      for (let i = 0; i < count; i++) {
+        const w = 18 + Math.random() * 10
+        const h = 36 + Math.random() * 26
+        st.obstacles.push({ kind: 'cactus', x, y: GROUND - h, w, h })
+        x += w + 6
+      }
+    }
+    st.nextGap = st.speed * (0.62 + Math.random() * 0.65) + 140
   }
-}
 
-export const DinoRunner: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const gsRef     = useRef<GS>(initGS())
-  const rafRef    = useRef(0)
-  const [uiScore, setUiScore] = useState(0)
-  const [uiDead,  setUiDead]  = useState(false)
-  const [uiBest,  setUiBest]  = useState(() => parseInt(localStorage.getItem('hs-dino') ?? '0', 10))
+  useGameLoop(
+    dt => {
+      const st = s.current
+      st.time += dt
+      if (phaseRef.current !== 'playing') return
 
-  // ── game loop ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const canvas = canvasRef.current!
-    const ctx    = canvas.getContext('2d')!
+      st.speed = Math.min(MAX_SPEED, st.speed + dt * 9)
+      const dx = st.speed * dt
+      st.distance += dx
+      const newScore = Math.floor(st.distance / 10)
+      if (Math.floor(newScore / 100) > Math.floor((newScore - dx / 10) / 100)) st.milestoneFlash = 1
+      st.milestoneFlash = Math.max(0, st.milestoneFlash - dt * 2)
 
-    function loop() {
-      const s = gsRef.current
-      ctx.clearRect(0, 0, W, H)
+      // Jumping with coyote time and input buffering so it feels responsive.
+      st.coyote = st.onGround ? COYOTE : Math.max(0, st.coyote - dt)
+      st.buffer = Math.max(0, st.buffer - dt)
+      if (st.buffer > 0 && st.coyote > 0) {
+        st.vy = JUMP_VELOCITY
+        st.onGround = false
+        st.buffer = 0
+        st.coyote = 0
+      }
+      const g = st.vy < 0 && st.jumpHeld ? GRAVITY * HOLD_GRAVITY : st.ducking ? GRAVITY * 2.2 : GRAVITY
+      st.vy += g * dt
+      st.y += st.vy * dt
+      const h = st.ducking && st.onGround ? DUCK.h : RUN.h
+      if (st.y >= GROUND - h) {
+        st.y = GROUND - h
+        st.vy = 0
+        st.onGround = true
+      } else st.onGround = false
+      if (st.y < 8) {
+        st.y = 8
+        st.vy = Math.max(st.vy, 0)
+      }
 
-      // Sky gradient
+      for (const o of st.obstacles) o.x -= dx * (o.kind === 'bird' ? 1.08 : 1)
+      st.obstacles = st.obstacles.filter(o => o.x + o.w > -20)
+      st.nextGap -= dx
+      if (st.nextGap <= 0) spawn()
+
+      for (const p of st.stars) p.x = (p.x - dx * 0.05 * p.s + W) % W
+      for (const p of st.pebbles) p.x = (p.x - dx + W * 2) % W
+
+      // Collision with a slightly forgiving hitbox.
+      const box = st.ducking && st.onGround ? DUCK : RUN
+      const px = PLAYER_X + 6
+      const py = st.y + 6
+      const pw = box.w - 12
+      const ph = box.h - 10
+      for (const o of st.obstacles) {
+        if (px < o.x + o.w - 4 && px + pw > o.x + 4 && py < o.y + o.h - 4 && py + ph > o.y + 4) {
+          const final = Math.floor(st.distance / 10)
+          setScore(final)
+          setRecord(final > (readBest(KEY) ?? 0))
+          setBest(recordScore(KEY, final))
+          setPhase('over')
+          return
+        }
+      }
+      if (newScore !== score && newScore % 5 === 0) setScore(newScore)
+    },
+    () => {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      const st = s.current
+      const dead = phaseRef.current === 'over'
+
       const sky = ctx.createLinearGradient(0, 0, 0, H)
-      sky.addColorStop(0, '#0a0a0f')
-      sky.addColorStop(1, '#12122b')
+      sky.addColorStop(0, '#0b0b14')
+      sky.addColorStop(1, '#16142a')
       ctx.fillStyle = sky
       ctx.fillRect(0, 0, W, H)
 
-      // Ground + glow
-      ctx.fillStyle = 'rgba(124,58,237,0.15)'
-      ctx.fillRect(0, GROUND_Y, W, 4)
-      ctx.fillStyle = '#7c3aed55'
-      ctx.fillRect(0, GROUND_Y + 4, W, 1)
+      for (const p of st.stars) {
+        ctx.fillStyle = `rgba(255,255,255,${0.25 + p.s * 0.2})`
+        ctx.fillRect(p.x, p.y, p.s, p.s)
+      }
+      // moon
+      ctx.fillStyle = '#e9e6ff'
+      ctx.beginPath()
+      ctx.arc(680, 58, 18, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#0d0c18'
+      ctx.beginPath()
+      ctx.arc(689, 52, 16, 0, Math.PI * 2)
+      ctx.fill()
 
-      if (s.running && !s.dead) {
-        // Physics
-        s.vy    += GRAVITY
-        s.dinoY += s.vy
-        if (s.dinoY >= GROUND_Y - DINO_H) { s.dinoY = GROUND_Y - DINO_H; s.vy = 0 }
+      // ground
+      ctx.fillStyle = '#7c6cff'
+      ctx.fillRect(0, GROUND, W, 2)
+      ctx.fillStyle = 'rgba(124,108,255,0.35)'
+      for (const p of st.pebbles) ctx.fillRect(p.x, p.y, p.w, 2)
 
-        // Scoring / speed
-        s.distance++
-        if (s.distance % 5 === 0) {
-          s.score++
-          if (s.score % 60 === 0) s.speed = Math.min(s.speed + 0.5, 16)
-          if (s.distance % 25 === 0) setUiScore(s.score)
+      // obstacles
+      for (const o of st.obstacles) {
+        if (o.kind === 'cactus') {
+          ctx.fillStyle = '#10b981'
+          ctx.beginPath()
+          ctx.roundRect(o.x, o.y, o.w, o.h + 2, [6, 6, 0, 0])
+          ctx.fill()
+          ctx.fillStyle = '#34d399'
+          const arm = o.h * 0.4
+          ctx.beginPath()
+          ctx.roundRect(o.x - 7, o.y + o.h * 0.35, 8, arm * 0.6, 3)
+          ctx.roundRect(o.x - 7, o.y + o.h * 0.35 - 8, 5, 12, 3)
+          ctx.roundRect(o.x + o.w - 1, o.y + o.h * 0.25, 8, arm * 0.5, 3)
+          ctx.roundRect(o.x + o.w + 2, o.y + o.h * 0.25 - 8, 5, 12, 3)
+          ctx.fill()
+        } else {
+          const flap = Math.sin(st.time * 18) > 0
+          ctx.fillStyle = '#f472b6'
+          ctx.beginPath()
+          ctx.ellipse(o.x + 22, o.y + 15, 16, 8, 0, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.beginPath()
+          ctx.moveTo(o.x + 14, o.y + 12)
+          ctx.lineTo(o.x + 26, o.y + (flap ? -4 : 30))
+          ctx.lineTo(o.x + 32, o.y + 12)
+          ctx.fill()
+          ctx.fillStyle = '#fbbf24'
+          ctx.beginPath()
+          ctx.moveTo(o.x + 6, o.y + 13)
+          ctx.lineTo(o.x - 4, o.y + 16)
+          ctx.lineTo(o.x + 6, o.y + 18)
+          ctx.fill()
         }
-
-        // Spawn obstacles
-        s.nextObs--
-        if (s.nextObs <= 0) {
-          const h = OBS_MIN + Math.random() * (OBS_MAX - OBS_MIN)
-          s.obstacles.push({ x: W + 10, height: h })
-          s.nextObs = 70 + Math.random() * 70 - s.speed * 1.5
-        }
-        s.obstacles.forEach(o => { o.x -= s.speed })
-        s.obstacles = s.obstacles.filter(o => o.x + OBS_W > 0)
-
-        // Leg animation
-        if (s.dinoY >= GROUND_Y - DINO_H && s.distance % 9 === 0)
-          s.frame = s.frame === 0 ? 1 : 0
-
-        // Collision
-        for (const obs of s.obstacles) {
-          const hit =
-            DINO_X + DINO_W - 5 > obs.x + 3 &&
-            DINO_X + 5         < obs.x + OBS_W - 3 &&
-            s.dinoY + DINO_H - 3  > GROUND_Y - obs.height
-          if (hit) {
-            s.dead = true
-            const best = parseInt(localStorage.getItem('hs-dino') ?? '0', 10)
-            if (s.score > best) {
-              localStorage.setItem('hs-dino', String(s.score))
-              setUiBest(s.score)
-            }
-            setUiDead(true)
-            setUiScore(s.score)
-            break
-          }
-        }
       }
 
-      // Draw obstacles (cactus-ish)
-      for (const obs of s.obstacles) {
-        const ox = obs.x, oy = GROUND_Y - obs.height
-        ctx.fillStyle = '#059669'
-        ctx.fillRect(ox, oy, OBS_W, obs.height)
-        ctx.fillStyle = '#10b981'
-        ctx.fillRect(ox - 7, oy + 10, 9, obs.height * 0.55)
-        ctx.fillRect(ox + OBS_W - 2, oy + obs.height * 0.2, 9, obs.height * 0.5)
-        ctx.fillStyle = '#059669'
-        ctx.fillRect(ox - 3, oy + 4, OBS_W + 4, 4)
+      // player
+      const ducking = st.ducking && st.onGround
+      const box = ducking ? DUCK : RUN
+      const x = PLAYER_X
+      const y = st.y
+      const body = dead ? '#ef4444' : '#a79dff'
+      ctx.fillStyle = body
+      if (ducking) {
+        ctx.beginPath()
+        ctx.roundRect(x, y + 6, box.w - 12, box.h - 12, 6)
+        ctx.roundRect(x + box.w - 22, y, 22, 18, 5)
+        ctx.fill()
+      } else {
+        ctx.beginPath()
+        ctx.roundRect(x, y + 14, box.w - 6, box.h - 26, 7)
+        ctx.roundRect(x + 14, y, box.w - 12, 20, 6)
+        ctx.roundRect(x - 8, y + 18, 12, 8, 3)
+        ctx.fill()
+      }
+      // eye
+      ctx.fillStyle = '#0b0b14'
+      ctx.fillRect(ducking ? x + box.w - 9 : x + box.w - 10, ducking ? y + 5 : y + 6, 4, 4)
+      // legs
+      ctx.fillStyle = body
+      const step = Math.floor(st.distance / 28) % 2
+      const legY = y + box.h - 12
+      if (!st.onGround) {
+        ctx.fillRect(x + 6, legY, 8, 10)
+        ctx.fillRect(x + 20, legY, 8, 10)
+      } else {
+        ctx.fillRect(x + 6, legY + (step ? 0 : 4), 8, step ? 12 : 8)
+        ctx.fillRect(x + 20, legY + (step ? 4 : 0), 8, step ? 8 : 12)
       }
 
-      // Draw dino
-      drawDino(ctx, s.dinoY, s.frame, s.dead)
-
-      // Overlay messages
-      if (!s.running && !s.dead) {
-        ctx.fillStyle = 'rgba(10,10,20,0.55)'
-        ctx.fillRect(0, 0, W, H)
-        ctx.fillStyle = '#a78bfa'
-        ctx.font = '600 15px "Space Grotesk", sans-serif'
-        ctx.textAlign = 'center'
-        ctx.fillText('Space  /  Tap to Start', W / 2, H / 2 + 5)
-        ctx.textAlign = 'left'
-      }
-
-      if (s.dead) {
-        ctx.fillStyle = 'rgba(0,0,0,0.6)'
-        ctx.fillRect(0, 0, W, H)
-        ctx.fillStyle = '#f1f5f9'
-        ctx.font = 'bold 22px "Space Grotesk", sans-serif'
-        ctx.textAlign = 'center'
-        ctx.fillText('Game Over!', W / 2, H / 2 - 14)
-        ctx.fillStyle = '#a78bfa'
-        ctx.font = '13px "JetBrains Mono", monospace'
-        ctx.fillText(`Score ${s.score}  ·  Space / Tap to Restart`, W / 2, H / 2 + 12)
-        ctx.textAlign = 'left'
-      }
-
-      rafRef.current = requestAnimationFrame(loop)
+      // score
+      const shown = Math.floor(st.distance / 10)
+      ctx.font = '600 16px "JetBrains Mono", monospace'
+      ctx.textAlign = 'right'
+      ctx.fillStyle = st.milestoneFlash > 0 && Math.floor(st.milestoneFlash * 8) % 2 === 0 ? '#ffffff' : 'rgba(255,255,255,0.6)'
+      ctx.fillText(String(shown).padStart(5, '0'), W - 20, 34)
+      ctx.textAlign = 'left'
     }
+  )
 
-    rafRef.current = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [])
-
-  // ── input ─────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    function jump() {
-      const s = gsRef.current
-      if (s.dead) {
-        // restart
-        Object.assign(s, initGS())
-        setUiScore(0)
-        setUiDead(false)
-        return
-      }
-      if (!s.running) s.running = true
-      if (s.dinoY >= GROUND_Y - DINO_H) s.vy = JUMP_V
-    }
-
-    function onKey(e: KeyboardEvent) {
-      if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump() }
-    }
-
-    window.addEventListener('keydown', onKey)
-    const canvas = canvasRef.current!
-    const onTouch = (e: TouchEvent) => { e.preventDefault(); jump() }
-    canvas.addEventListener('touchstart', onTouch, { passive: false })
-    canvas.addEventListener('click', jump)
-
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      canvas.removeEventListener('touchstart', onTouch)
-      canvas.removeEventListener('click', jump)
-    }
-  }, [])
-
-  function handleRestart() {
-    Object.assign(gsRef.current, initGS())
-    setUiScore(0)
-    setUiDead(false)
-  }
+  const overlay =
+    phase === 'ready' ? (
+      <Overlay title={tr.arcade.games.dino.title} subtitle={touch ? g$.runner.hintTouch : g$.runner.hintKeys} action={g$.start} onAction={start} />
+    ) : phase === 'over' ? (
+      <Overlay title={g$.gameOver} subtitle={g$.runner.result(score) + (record ? g$.newBest : '')} action={g$.runAgain} onAction={start} />
+    ) : null
 
   return (
-    <div className="flex flex-col items-center gap-3 select-none">
-      <canvas
-        ref={canvasRef}
-        width={W}
-        height={H}
-        className="rounded-xl border dark:border-dark-border border-light-border w-full max-w-[600px]"
-        style={{ cursor: 'pointer', touchAction: 'none' }}
-        aria-label="Dino Runner game canvas"
-      />
-      <div className="flex items-center gap-6 text-sm dark:text-slate-400 text-slate-600">
-        <span className="font-mono">Score: <span className="text-accent-400 font-semibold">{uiScore}</span></span>
-        <span className="font-mono text-xs dark:text-slate-500 text-slate-500">
-          Best: <span className="text-emerald-400">{uiBest}</span>
-        </span>
-      </div>
-      <div className="flex items-center gap-4">
-        <button
-          onClick={handleRestart}
-          className="flex items-center gap-1.5 text-xs dark:text-slate-500 text-slate-500 hover:text-accent-400 transition-colors px-3 py-1.5 rounded-lg border dark:border-dark-border border-light-border"
-          aria-label="Restart dino runner"
-        >
-          <RefreshCw size={12} /> Restart
-        </button>
-        <span className="text-xs dark:text-slate-600 text-slate-400 font-mono">Space / ↑ to jump</span>
-      </div>
-      {/* Mobile jump button */}
-      <button
-        className="md:hidden mt-1 w-28 py-3 rounded-xl text-sm font-semibold
-          bg-accent-600 hover:bg-accent-500 text-white active:scale-95 transition-all"
-        onPointerDown={e => { e.preventDefault(); canvasRef.current?.click() }}
-        aria-label="Jump"
+    <div>
+      <GameHud stats={[{ label: g$.score, value: score }, { label: g$.best, value: best }]} onRestart={start} />
+      <div
+        onPointerDown={e => {
+          if (phaseRef.current !== 'playing' || (e.target as HTMLElement).closest('button')) return
+          e.preventDefault()
+          jumpDown()
+        }}
+        onPointerUp={jumpUp}
+        className="touch-none"
       >
-        Jump ↑
-      </button>
+        <Stage ratio={W / H} reserve={touch ? 320 : 220} overlay={overlay}>
+          <canvas ref={canvasRef} className="block h-full w-full cursor-pointer" aria-label="Runner game" />
+        </Stage>
+      </div>
+      {touch && (
+        <div className="mx-auto mt-4 grid max-w-xs grid-cols-2 gap-3">
+          <GameButton label={g$.runner.duck} onPress={() => duck(true)} onRelease={() => duck(false)}>
+            <ArrowDown size={20} />
+          </GameButton>
+          <GameButton label={g$.runner.jump} onPress={jumpDown} onRelease={jumpUp} className="bg-accent text-accent-fg">
+            <ArrowUp size={20} />
+          </GameButton>
+        </div>
+      )}
     </div>
   )
 }

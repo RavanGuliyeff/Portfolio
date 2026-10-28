@@ -1,119 +1,59 @@
-import React from 'react'
-import { motion } from 'framer-motion'
-import { Briefcase, Calendar, MapPin } from 'lucide-react'
+import { Section } from '@/components/shared/Section'
 import { SectionHeader } from '@/components/shared/SectionHeader'
-import { Badge } from '@/components/ui/Badge'
+import { Reveal } from '@/components/shared/Reveal'
 import { EXPERIENCE } from '@/constants/portfolio'
-import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { useI18n } from '@/i18n/I18nProvider'
 
-const cardVariants = {
-  hidden:  { opacity: 0, y: 30 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.55, delay: i * 0.12, ease: 'easeOut' },
-  }),
-}
-
-export const Experience: React.FC = () => {
-  const reduced = usePrefersReducedMotion()
-
+export function Experience() {
+  const { t, range } = useI18n()
   return (
-    <section
-      id="experience"
-      className="py-24 dark:bg-dark-bg bg-light-bg"
-      aria-label="Experience section"
-    >
-      <div className="section-container">
-        <SectionHeader
-          label="Career Path"
-          title="Work "
-          highlight="Experience"
-          subtitle="Real-world projects, mentorship, and freelance engineering — here's where I've been."
-        />
+    <Section id="experience" label={t.nav.experience} muted>
+      <SectionHeader eyebrow={t.experience.eyebrow} title={t.experience.title} description={t.experience.description} />
 
-        <div className="relative max-w-4xl mx-auto mt-4">
-          {/* Timeline line */}
-          <div className="hidden md:block absolute left-1/2 -translate-x-px top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-accent-600/50 to-transparent" aria-hidden="true" />
-
-          {EXPERIENCE.map((exp, i) => {
-            const isLeft = i % 2 === 0
-
-            return (
-              <motion.div
-                key={exp.id}
-                className={`relative flex md:items-start gap-6 mb-12 ${isLeft ? 'md:flex-row' : 'md:flex-row-reverse'}`}
-                custom={i}
-                variants={reduced ? {} : cardVariants}
-                initial="hidden"
-                whileInView="visible"
-                viewport={{ once: true, margin: '-60px' }}
-              >
-                {/* Card (takes ~45% on desktop) */}
-                <div className={`flex-1 md:max-w-[45%] ${isLeft ? '' : 'md:text-right'}`}>
-                  <div className="dark:bg-dark-card bg-light-card border dark:border-dark-border border-light-border rounded-2xl p-6 shadow-card-dark hover-glow transition-all duration-300">
-                    {/* Header */}
-                    <div className={`flex items-start justify-between gap-3 mb-3 ${isLeft ? '' : 'flex-row-reverse'}`}>
-                      <div>
-                        <h3 className="font-heading font-semibold text-lg dark:text-white text-slate-900">
-                          {exp.role}
-                        </h3>
-                        <p className="text-accent-400 font-medium text-sm">{exp.company}</p>
-                      </div>
-                      <span className="shrink-0 px-2.5 py-1 rounded-full text-xs font-mono dark:bg-dark-border bg-light-border dark:text-slate-400 text-slate-500">
-                        {exp.type}
-                      </span>
-                    </div>
-
-                    {/* Meta */}
-                    <div className={`flex flex-wrap gap-3 text-xs dark:text-slate-500 text-slate-500 mb-4 ${isLeft ? '' : 'justify-end'}`}>
-                      <span className="flex items-center gap-1">
-                        <Calendar size={12} />
-                        {exp.period}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <MapPin size={12} />
-                        Baku, Azerbaijan
-                      </span>
-                    </div>
-
-                    {/* Bullets */}
-                    <ul className={`space-y-1.5 mb-4 ${isLeft ? '' : 'text-right'}`}>
-                      {exp.description.map((point, j) => (
-                        <li key={j} className="text-sm dark:text-slate-400 text-slate-600 flex gap-2 items-start">
-                          <span className="text-accent-500 mt-1 shrink-0">▸</span>
-                          <span>{point}</span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    {/* Tech badges */}
-                    <div className={`flex flex-wrap gap-1.5 ${isLeft ? '' : 'justify-end'}`}>
-                      {exp.tech.map(t => (
-                        <Badge key={t} variant="accent">{t}</Badge>
-                      ))}
-                    </div>
+      <ol className="relative space-y-6 border-l border-line pl-6 sm:pl-10">
+        {EXPERIENCE.map((job, i) => {
+          const text = t.experience.items[job.id]
+          return (
+            <Reveal as="li" key={job.id} delay={i * 0.05} className="relative">
+              <span
+                className="absolute -left-[29px] top-7 h-2.5 w-2.5 rounded-full border-2 border-bg bg-accent ring-4 ring-accent/15 sm:-left-[45px]"
+                aria-hidden="true"
+              />
+              <article className="card p-6 sm:p-7">
+                <header className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+                  <div>
+                    <h3 className="text-lg font-semibold text-fg">{text.role}</h3>
+                    <p className="mt-0.5 text-[15px] text-accent-text">
+                      {job.company}
+                      {text.employment && text.employment !== job.company && (
+                        <span className="text-subtle"> · {text.employment}</span>
+                      )}
+                    </p>
                   </div>
-                </div>
+                  <p className="shrink-0 font-mono text-xs text-subtle sm:pt-1.5">{range(job.start, job.end)}</p>
+                </header>
 
-                {/* Centre dot */}
-                <div className="hidden md:flex flex-col items-center justify-start pt-6 shrink-0">
-                  <motion.div
-                    className="w-4 h-4 rounded-full bg-accent-500 border-4 dark:border-dark-bg border-light-bg shadow-violet-glow z-10"
-                    initial={{ scale: 0 }}
-                    whileInView={{ scale: 1 }}
-                    viewport={{ once: true }}
-                    transition={{ delay: i * 0.12 + 0.3, type: 'spring', stiffness: 400 }}
-                  />
-                </div>
+                <ul className="mt-4 space-y-2.5">
+                  {text.highlights.map(point => (
+                    <li key={point} className="flex gap-3 text-[15px] leading-relaxed text-muted">
+                      <span className="mt-[11px] h-1 w-1 shrink-0 rounded-full bg-subtle" aria-hidden="true" />
+                      <span>{point}</span>
+                    </li>
+                  ))}
+                </ul>
 
-                {/* Spacer for the other side */}
-                <div className="hidden md:block flex-1 md:max-w-[45%]" />
-              </motion.div>
-            )
-          })}
-        </div>
-      </div>
-    </section>
+                <ul className="mt-5 flex flex-wrap gap-1.5" aria-label={t.experience.technologies}>
+                  {job.tech.map(tech => (
+                    <li key={tech} className="chip">
+                      {tech}
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            </Reveal>
+          )
+        })}
+      </ol>
+    </Section>
   )
 }

@@ -1,130 +1,148 @@
-import React, { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X } from 'lucide-react'
-import { NAV_LINKS } from '@/constants/portfolio'
-import { useThemeContext } from '@/App'
+import { useEffect, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { FileText, Menu, X } from 'lucide-react'
+import { NAV_IDS, OWNER } from '@/constants/portfolio'
+import { useI18n } from '@/i18n/I18nProvider'
+import { LanguageSwitcher } from '@/components/ui/LanguageSwitcher'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
+import { ButtonLink } from '@/components/ui/Button'
 
-export const Navbar: React.FC = () => {
-  const { isDark } = useThemeContext()
-  const [scrolled,       setScrolled]       = useState(false)
-  const [activeSection,  setActiveSection]  = useState('hero')
-  const [mobileOpen,     setMobileOpen]     = useState(false)
+function useActiveSection(ids: string[]) {
+  const [active, setActive] = useState<string | null>(null)
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 40)
+    const observer = new IntersectionObserver(
+      entries => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) setActive(entry.target.id)
+        }
+      },
+      // A thin band in the middle of the viewport decides which section is "current".
+      { rootMargin: '-45% 0px -54% 0px' }
+    )
+    ids.forEach(id => {
+      const el = document.getElementById(id)
+      if (el) observer.observe(el)
+    })
+    return () => observer.disconnect()
+  }, [ids])
+
+  return active
+}
+
+const ids = [...NAV_IDS]
+
+export function Navbar() {
+  const [scrolled, setScrolled] = useState(false)
+  const [open, setOpen] = useState(false)
+  const active = useActiveSection(ids)
+  const { t } = useI18n()
+  const links = NAV_IDS.map(id => ({ id, label: t.nav[id] }))
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8)
+    onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
-  // Track active section via IntersectionObserver
   useEffect(() => {
-    const sections = NAV_LINKS.map(l => document.getElementById(l.id)).filter(Boolean) as HTMLElement[]
-    const observer = new IntersectionObserver(
-      entries => {
-        const visible = entries.filter(e => e.isIntersecting)
-        if (visible.length > 0) {
-          setActiveSection(visible[0].target.id)
-        }
-      },
-      { threshold: 0.35 }
-    )
-    sections.forEach(s => observer.observe(s))
-    return () => observer.disconnect()
-  }, [])
-
-  const scrollTo = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
-    setMobileOpen(false)
-  }
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
 
   return (
-    <motion.header
-      className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${
-        scrolled
-          ? 'dark:bg-dark-bg/80 bg-light-bg/80 backdrop-blur-md border-b dark:border-dark-border border-light-border shadow-lg'
-          : 'bg-transparent'
+    <header
+      className={`fixed inset-x-0 top-0 z-50 transition-[background-color,border-color] duration-200 ${
+        scrolled || open ? 'border-b border-line bg-bg/80 backdrop-blur-lg' : 'border-b border-transparent'
       }`}
-      initial={{ y: -80 }}
-      animate={{ y: 0 }}
-      transition={{ duration: 0.5, ease: 'easeOut' }}
     >
-      <nav className="section-container flex items-center justify-between h-16" aria-label="Main navigation">
-        {/* Logo */}
-        <motion.button
-          onClick={() => scrollTo('hero')}
-          className="font-heading font-bold text-xl select-none"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          aria-label="Go to top"
-        >
-          <span className="gradient-text">RG</span>
-        </motion.button>
+      <nav className="container-page flex h-16 items-center justify-between gap-4" aria-label="Main">
+        <a href="#top" className="flex items-center gap-2.5 font-semibold tracking-tight text-fg">
+          <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-sm font-bold text-accent-fg">
+            RG
+          </span>
+          <span className="hidden sm:inline">{OWNER.name}</span>
+        </a>
 
-        {/* Desktop links */}
-        <ul className="hidden md:flex items-center gap-1" role="list">
-          {NAV_LINKS.map(link => (
+        <ul className="hidden items-center gap-1 lg:flex">
+          {links.map(link => (
             <li key={link.id}>
-              <button
-                onClick={() => scrollTo(link.id)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  activeSection === link.id
-                    ? 'text-accent-400 bg-accent-500/10'
-                    : 'dark:text-slate-400 text-slate-600 hover:text-accent-400 hover:bg-accent-500/10'
+              <a
+                href={`#${link.id}`}
+                aria-current={active === link.id ? 'true' : undefined}
+                className={`rounded-lg px-3 py-2 text-sm transition-colors ${
+                  active === link.id ? 'text-fg' : 'text-muted hover:text-fg'
                 }`}
-                aria-current={activeSection === link.id ? 'page' : undefined}
               >
                 {link.label}
-              </button>
+              </a>
             </li>
           ))}
         </ul>
 
-        {/* Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
+          <LanguageSwitcher />
           <ThemeToggle />
-
-          {/* Mobile hamburger */}
-          <button
-            className="md:hidden p-2 rounded-lg dark:text-slate-400 text-slate-600 hover:text-accent-400 hover:bg-accent-500/10 transition-colors"
-            onClick={() => setMobileOpen(o => !o)}
-            aria-label="Toggle mobile menu"
-            aria-expanded={mobileOpen}
+          <ButtonLink
+            href={OWNER.resumeUrl}
+            target="_blank"
+            rel="noopener"
+            size="sm"
+            variant="secondary"
+            className="hidden sm:inline-flex"
+            icon={<FileText size={15} />}
           >
-            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+            {t.nav.resume}
+          </ButtonLink>
+          <button
+            type="button"
+            className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-elevated hover:text-fg lg:hidden"
+            onClick={() => setOpen(o => !o)}
+            aria-label={open ? t.nav.closeMenu : t.nav.openMenu}
+            aria-expanded={open}
+            aria-controls="mobile-menu"
+          >
+            {open ? <X size={19} /> : <Menu size={19} />}
           </button>
         </div>
       </nav>
 
-      {/* Mobile menu */}
       <AnimatePresence>
-        {mobileOpen && (
+        {open && (
           <motion.div
-            className="md:hidden dark:bg-dark-surface/95 bg-light-surface/95 backdrop-blur-md border-b dark:border-dark-border border-light-border"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{   opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
+            id="mobile-menu"
+            className="overflow-hidden border-t border-line lg:hidden"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
           >
-            <ul className="section-container py-3 flex flex-col gap-1" role="list">
-              {NAV_LINKS.map(link => (
+            <ul className="container-page flex flex-col py-3">
+              {links.map(link => (
                 <li key={link.id}>
-                  <button
-                    onClick={() => scrollTo(link.id)}
-                    className={`w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                      activeSection === link.id
-                        ? 'text-accent-400 bg-accent-500/10'
-                        : 'dark:text-slate-400 text-slate-600 hover:text-accent-400'
+                  <a
+                    href={`#${link.id}`}
+                    onClick={() => setOpen(false)}
+                    className={`block rounded-lg px-3 py-2.5 text-[15px] ${
+                      active === link.id ? 'bg-elevated text-fg' : 'text-muted'
                     }`}
                   >
                     {link.label}
-                  </button>
+                  </a>
                 </li>
               ))}
+              <li className="mt-2 sm:hidden">
+                <a href={OWNER.resumeUrl} target="_blank" rel="noopener" className="block px-3 py-2.5 text-accent-text">
+                  {t.nav.downloadResume}
+                </a>
+              </li>
             </ul>
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.header>
+    </header>
   )
 }

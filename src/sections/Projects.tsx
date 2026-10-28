@@ -1,135 +1,82 @@
-import React from 'react'
-import { motion } from 'framer-motion'
-import { Github, Users, Calendar, ExternalLink } from 'lucide-react'
+import { ArrowUpRight, Github } from 'lucide-react'
+import { Section } from '@/components/shared/Section'
 import { SectionHeader } from '@/components/shared/SectionHeader'
-import { Badge } from '@/components/ui/Badge'
-import { TiltCard } from '@/components/shared/TiltCard'
-import { PROJECTS } from '@/constants/portfolio'
-import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { Reveal } from '@/components/shared/Reveal'
+import { OWNER, PROJECTS } from '@/constants/portfolio'
+import { useI18n } from '@/i18n/I18nProvider'
 
-const projectColors: Record<string, string> = {
-  englishwithmovies: 'from-violet-500/20 to-indigo-500/20',
-  otaqaz:            'from-emerald-500/20 to-teal-500/20',
-  smartlogistics:    'from-cyan-500/20 to-blue-500/20',
-}
-
-export const Projects: React.FC = () => {
-  const reduced = usePrefersReducedMotion()
-
+export function Projects() {
+  const { t, range } = useI18n()
   return (
-    <section
-      id="projects"
-      className="py-24 dark:bg-dark-surface bg-light-surface"
-      aria-label="Projects section"
-    >
-      <div className="section-container">
-        <SectionHeader
-          label="What I've Built"
-          title="Featured "
-          highlight="Projects"
-          subtitle="Production systems from real estate platforms to gamified learning apps — built with scalability in mind."
-        />
+    <Section id="projects" label={t.nav.projects}>
+      <SectionHeader eyebrow={t.projects.eyebrow} title={t.projects.title} description={t.projects.description} />
 
-        {/* Bento-style asymmetric grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {PROJECTS.map((project, i) => (
-            <motion.div
-              key={project.id}
-              className={i === 0 ? 'md:col-span-2 xl:col-span-1' : ''}
-              initial={reduced ? {} : { opacity: 0, y: 30 }}
-              whileInView={reduced ? {} : { opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: '-60px' }}
-              transition={{ duration: 0.55, delay: i * 0.1, ease: 'easeOut' }}
+      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+        {PROJECTS.map((p, i) => {
+          const text = t.projects.items[p.id]
+          return (
+            <Reveal
+              as="article"
+              key={p.id}
+              delay={i * 0.06}
+              className="card group flex flex-col p-6 transition-colors hover:border-accent/40"
             >
-              <TiltCard className="h-full">
-                <div
-                  className={`h-full dark:bg-dark-card bg-light-card border dark:border-dark-border border-light-border rounded-2xl overflow-hidden group hover-glow`}
-                >
-                  {/* Top gradient stripe */}
-                  <div className={`h-1.5 w-full bg-gradient-to-r ${projectColors[project.id] ?? 'from-accent-600 to-accent-400'} opacity-80`} />
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-mono text-xs text-accent-text">{text.kind}</p>
+                <p className="shrink-0 font-mono text-xs text-subtle">{range(p.start, p.end)}</p>
+              </div>
+              <h3 className="mt-3 text-xl font-semibold tracking-tight text-fg">{p.name}</h3>
+              <p className="mt-2 text-[15px] leading-relaxed text-muted">{text.summary}</p>
 
-                  <div className="p-6 flex flex-col h-full">
-                    {/* Title row */}
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div>
-                        <h3 className="font-heading font-bold text-xl dark:text-white text-slate-900 group-hover:text-accent-400 transition-colors">
-                          {project.name}
-                        </h3>
-                        <div className="flex items-center gap-3 mt-1 text-xs dark:text-slate-500 text-slate-500">
-                          <span className="flex items-center gap-1">
-                            <Calendar size={11} />
-                            {project.date}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Users size={11} />
-                            {project.teamSize} {project.teamSize === 1 ? 'person' : 'people'}
-                          </span>
-                        </div>
-                      </div>
-                      {project.github && (
-                        <a
-                          href={project.github}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-2 rounded-lg dark:text-slate-400 text-slate-500 hover:text-accent-400 hover:bg-accent-500/10 transition-colors shrink-0"
-                          aria-label={`View ${project.name} on GitHub`}
-                        >
-                          <Github size={18} />
-                        </a>
-                      )}
-                    </div>
+              <ul className="mt-5 space-y-2 border-t border-line pt-5">
+                {text.highlights.map(h => (
+                  <li key={h} className="flex gap-2.5 text-sm leading-relaxed text-muted">
+                    <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-accent" aria-hidden="true" />
+                    {h}
+                  </li>
+                ))}
+              </ul>
 
-                    {/* Description */}
-                    <p className="text-sm dark:text-slate-400 text-slate-600 leading-relaxed mb-4">
-                      {project.description}
-                    </p>
-
-                    {/* Highlights */}
-                    {project.highlights && (
-                      <ul className="space-y-1 mb-4">
-                        {project.highlights.map((h, hi) => (
-                          <li key={hi} className="text-xs dark:text-slate-500 text-slate-500 flex gap-1.5 items-start">
-                            <span className="text-accent-500 shrink-0">→</span>
-                            {h}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-
-                    {/* Tech badges — push to bottom */}
-                    <div className="mt-auto flex flex-wrap gap-1.5 pt-2">
-                      {project.tech.map(t => (
-                        <Badge key={t} variant="accent" size="sm">{t}</Badge>
-                      ))}
-                    </div>
+              <div className="mt-auto pt-6">
+                {text.team && <p className="mb-3 text-xs text-subtle">{text.team}</p>}
+                <ul className="flex flex-wrap gap-1.5">
+                  {p.tech.map(tech => (
+                    <li key={tech} className="chip">
+                      {tech}
+                    </li>
+                  ))}
+                </ul>
+                {p.links && p.links.length > 0 && (
+                  <div className="mt-5 flex gap-4">
+                    {p.links.map(l => (
+                      <a
+                        key={l.url}
+                        href={l.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="link inline-flex items-center gap-1 text-sm"
+                      >
+                        {l.label} <ArrowUpRight size={14} />
+                      </a>
+                    ))}
                   </div>
-                </div>
-              </TiltCard>
-            </motion.div>
-          ))}
-        </div>
-
-        {/* CTA */}
-        <motion.div
-          className="mt-10 text-center"
-          initial={reduced ? {} : { opacity: 0 }}
-          whileInView={reduced ? {} : { opacity: 1 }}
-          viewport={{ once: true }}
-          transition={{ delay: 0.4 }}
-        >
-          <a
-            href="https://github.com/RavanGuliyeff"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 text-sm text-accent-400 hover:text-accent-300 font-medium transition-colors"
-            aria-label="View more projects on GitHub"
-          >
-            <Github size={16} />
-            More on GitHub
-            <ExternalLink size={14} />
-          </a>
-        </motion.div>
+                )}
+              </div>
+            </Reveal>
+          )
+        })}
       </div>
-    </section>
+
+      <Reveal className="mt-10 flex justify-center">
+        <a
+          href={OWNER.github}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 text-sm text-muted transition-colors hover:text-fg"
+        >
+          <Github size={16} /> {t.projects.moreOnGithub} <ArrowUpRight size={14} />
+        </a>
+      </Reveal>
+    </Section>
   )
 }

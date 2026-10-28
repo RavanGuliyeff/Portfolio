@@ -1,22 +1,14 @@
-import React from 'react'
-import { motion, useSpring } from 'framer-motion'
-import { useScrollProgress } from '@/hooks/useScrollProgress'
+import { motion, useScroll, useSpring } from 'framer-motion'
 
-export const ScrollProgress: React.FC = () => {
-  const progress = useScrollProgress()
-  const spring   = useSpring(progress, { stiffness: 150, damping: 30 })
-
+// Driven by motion values, so scrolling never re-renders React.
+export function ScrollProgress() {
+  const { scrollYProgress } = useScroll()
+  const scaleX = useSpring(scrollYProgress, { stiffness: 200, damping: 40, restDelta: 0.001 })
   return (
-    <div
-      className="fixed top-0 left-0 right-0 z-50 h-[3px] dark:bg-dark-border bg-light-border"
+    <motion.div
       aria-hidden="true"
-    >
-      <motion.div
-        className="h-full bg-gradient-to-r from-accent-600 to-accent-400"
-        style={{ width: `${spring.get()}%` }}
-        animate={{ width: `${progress}%` }}
-        transition={{ ease: 'easeOut', duration: 0.1 }}
-      />
-    </div>
+      className="fixed inset-x-0 top-0 z-[55] h-0.5 origin-left bg-accent"
+      style={{ scaleX }}
+    />
   )
 }

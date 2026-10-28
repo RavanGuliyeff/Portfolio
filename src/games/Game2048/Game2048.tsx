@@ -1,340 +1,273 @@
-﻿import React, { useState, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { RefreshCw, Trophy } from 'lucide-react'
+﻿import { useCallback, useEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from 'lucide-react'
+import { isTouchDevice, useKeyboard, useSwipe } from '../engine/input'
+import { readBest, recordScore } from '../engine/storage'
+import { GameButton, GameHud } from '../engine/GameUI'
+import { useI18n } from '@/i18n/I18nProvider'
 
-//  Types 
-type Direction = 'left' | 'right' | 'up' | 'down'
+const SIZE = 4
+const KEY = 'hs-2048'
+const MOVE_MS = 110
 
-interface TileData {
-  id:         number
-  value:      number
-  row:        number
-  col:        number
-  isNew:      boolean
-  isMerged:   boolean
+type Dir = 'up' | 'down' | 'left' | 'right'
+interface Tile {
+  id: number
+  value: number
+  r: number
+  c: number
+  isNew?: boolean
+  merged?: boolean
+  removing?: boolean
 }
 
-//  Tile ID counter 
-let _id = 0
-function freshId() { return ++_id }
+let nextId = 1
 
-//  Tile style map 
-const COLORS: Record<number, { bg: string; fg: string }> = {
-  2:    { bg: '#1e1b3a', fg: '#c4b5fd' },
-  4:    { bg: '#2e2060', fg: '#ddd6fe' },
-  8:    { bg: '#7c3aed', fg: '#ffffff' },
-  16:   { bg: '#6d28d9', fg: '#ffffff' },
-  32:   { bg: '#ea580c', fg: '#ffffff' },
-  64:   { bg: '#dc2626', fg: '#ffffff' },
-  128:  { bg: '#d97706', fg: '#ffffff' },
-  256:  { bg: '#ca8a04', fg: '#ffffff' },
-  512:  { bg: '#16a34a', fg: '#ffffff' },
-  1024: { bg: '#0891b2', fg: '#ffffff' },
-  2048: { bg: '#7c3aed', fg: '#fff176' },
+const STYLES: Record<number, { bg: string; fg: string }> = {
+  2: { bg: '#27272a', fg: '#e4e4e7' },
+  4: { bg: '#3f3f46', fg: '#f4f4f5' },
+  8: { bg: '#c2410c', fg: '#fff' },
+  16: { bg: '#ea580c', fg: '#fff' },
+  32: { bg: '#e11d48', fg: '#fff' },
+  64: { bg: '#be123c', fg: '#fff' },
+  128: { bg: '#ca8a04', fg: '#fff' },
+  256: { bg: '#d97706', fg: '#fff' },
+  512: { bg: '#16a34a', fg: '#fff' },
+  1024: { bg: '#0891b2', fg: '#fff' },
+  2048: { bg: '#7c6cff', fg: '#fff' },
 }
-function tileColor(v: number) {
-  return COLORS[v] ?? { bg: '#581c87', fg: '#ffffff' }
-}
+const styleFor = (v: number) => STYLES[v] ?? { bg: '#18181b', fg: '#a79dff' }
 
-//  Grid helpers 
-function makeEmpty(): TileData[] { return [] }
-
-function spawnRandom(tiles: TileData[]): TileData[] {
-  const occupied = new Set(tiles.map(t => `${t.row},${t.col}`))
-  const free: [number, number][] = []
-  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
-    if (!occupied.has(`${r},${c}`)) free.push([r, c])
-  }
+function spawn(tiles: Tile[]): Tile[] {
+  const taken = new Set(tiles.filter(t => !t.removing).map(t => t.r * SIZE + t.c))
+  const free = Array.from({ length: SIZE * SIZE }, (_, i) => i).filter(i => !taken.has(i))
   if (!free.length) return tiles
-  const [row, col] = free[Math.floor(Math.random() * free.length)]
-  return [...tiles, { id: freshId(), value: Math.random() < 0.85 ? 2 : 4, row, col, isNew: true, isMerged: false }]
+  const i = free[Math.floor(Math.random() * free.length)]
+  return [...tiles, { id: nextId++, value: Math.random() < 0.9 ? 2 : 4, r: Math.floor(i / SIZE), c: i % SIZE, isNew: true }]
 }
 
-function init(): TileData[] {
-  return spawnRandom(spawnRandom(makeEmpty()))
-}
+const initial = () => spawn(spawn([]))
 
-//  Move algorithm 
-function moveTiles(tiles: TileData[], dir: Direction): { tiles: TileData[]; score: number; moved: boolean } {
-  // Flatten to 4x4 grid keyed by position
-  const grid: (TileData | null)[][] = Array.from({ length: 4 }, () => Array(4).fill(null))
-  tiles.forEach(t => { grid[t.row][t.col] = t })
+/** Pure move: returns the new tiles (merged-away tiles flagged `removing`) and points gained. */
+function move(tiles: Tile[], dir: Dir) {
+  const live = tiles.filter(t => !t.removing).map(t => ({ ...t, isNew: false, merged: false }))
+  const out: Tile[] = []
+  let points = 0
+  let moved = false
 
-  const result: TileData[] = []
-  let score = 0
+  for (let line = 0; line < SIZE; line++) {
+    const inLine = live
+      .filter(t => (dir === 'left' || dir === 'right' ? t.r === line : t.c === line))
+      .sort((a, b) => {
+        const ka = dir === 'left' || dir === 'right' ? a.c : a.r
+        const kb = dir === 'left' || dir === 'right' ? b.c : b.r
+        return dir === 'left' || dir === 'up' ? ka - kb : kb - ka
+      })
 
-  // Determine iteration order & target position assignment for each direction
-  const rows    = [0, 1, 2, 3]
-  const cols    = [0, 1, 2, 3]
-  const revCols = [3, 2, 1, 0]
-  const revRows = [3, 2, 1, 0]
-
-  function slideLine(line: (TileData | null)[]): { out: TileData[]; removed: TileData[]; pts: number } {
-    const filled = line.filter(Boolean) as TileData[]
-    const out: TileData[] = []
-    const removed: TileData[] = []
-    let pts = 0
-    let i = 0
-    while (i < filled.length) {
-      if (i + 1 < filled.length && filled[i].value === filled[i + 1].value) {
-        const val = filled[i].value * 2
-        pts += val
-        out.push({ ...filled[i], value: val, isMerged: true, isNew: false })
-        removed.push(filled[i + 1])
-        i += 2
-      } else {
-        out.push({ ...filled[i], isMerged: false, isNew: false })
-        i++
+    let pos = 0
+    let last: Tile | null = null
+    for (const t of inLine) {
+      if (last && !last.merged && last.value === t.value) {
+        last.value *= 2
+        last.merged = true
+        points += last.value
+        out.push({ ...t, r: last.r, c: last.c, removing: true })
+        moved = true
+        continue
       }
+      const idx = dir === 'left' || dir === 'up' ? pos : SIZE - 1 - pos
+      const target = dir === 'left' || dir === 'right' ? { r: line, c: idx } : { r: idx, c: line }
+      if (target.r !== t.r || target.c !== t.c) moved = true
+      const placed = { ...t, ...target }
+      out.push(placed)
+      last = placed
+      pos++
     }
-    return { out, removed, pts }
   }
-
-  const removedIds = new Set<number>()
-
-  if (dir === 'left') {
-    rows.forEach(r => {
-      const line = cols.map(c => grid[r][c])
-      const { out, removed, pts } = slideLine(line)
-      score += pts
-      removed.forEach(t => removedIds.add(t.id))
-      out.forEach((t, newC) => result.push({ ...t, row: r, col: newC }))
-    })
-  } else if (dir === 'right') {
-    rows.forEach(r => {
-      const line = revCols.map(c => grid[r][c])
-      const { out, removed, pts } = slideLine(line)
-      score += pts
-      removed.forEach(t => removedIds.add(t.id))
-      out.forEach((t, i) => result.push({ ...t, row: r, col: 3 - i }))
-    })
-  } else if (dir === 'up') {
-    cols.forEach(c => {
-      const line = rows.map(r => grid[r][c])
-      const { out, removed, pts } = slideLine(line)
-      score += pts
-      removed.forEach(t => removedIds.add(t.id))
-      out.forEach((t, newR) => result.push({ ...t, row: newR, col: c }))
-    })
-  } else {
-    cols.forEach(c => {
-      const line = revRows.map(r => grid[r][c])
-      const { out, removed, pts } = slideLine(line)
-      score += pts
-      removed.forEach(t => removedIds.add(t.id))
-      out.forEach((t, i) => result.push({ ...t, row: 3 - i, col: c }))
-    })
-  }
-
-  const moved = result.some(t => {
-    const orig = tiles.find(o => o.id === t.id)
-    return orig && (orig.row !== t.row || orig.col !== t.col)
-  }) || removedIds.size > 0
-
-  return { tiles: result, score, moved }
+  return { tiles: out, points, moved }
 }
 
-function canMove(tiles: TileData[]): boolean {
-  if (tiles.length < 16) return true
-  const g: number[][] = Array.from({ length: 4 }, () => Array(4).fill(0))
-  tiles.forEach(t => { g[t.row][t.col] = t.value })
-  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
-    if (c < 3 && g[r][c] === g[r][c + 1]) return true
-    if (r < 3 && g[r][c] === g[r + 1][c]) return true
-  }
+function canMove(tiles: Tile[]) {
+  const live = tiles.filter(t => !t.removing)
+  if (live.length < SIZE * SIZE) return true
+  const grid: number[][] = Array.from({ length: SIZE }, () => Array(SIZE).fill(0))
+  live.forEach(t => (grid[t.r][t.c] = t.value))
+  for (let r = 0; r < SIZE; r++)
+    for (let c = 0; c < SIZE; c++) {
+      if (c < SIZE - 1 && grid[r][c] === grid[r][c + 1]) return true
+      if (r < SIZE - 1 && grid[r][c] === grid[r + 1][c]) return true
+    }
   return false
 }
 
-function hasWon(tiles: TileData[]) { return tiles.some(t => t.value >= 2048) }
+export function Game2048() {
+  const [tiles, setTiles] = useState<Tile[]>(initial)
+  const [score, setScore] = useState(0)
+  const [best, setBest] = useState(() => readBest(KEY) ?? 0)
+  const [status, setStatus] = useState<'playing' | 'won' | 'over' | 'continue'>('playing')
+  const tilesRef = useRef(tiles)
+  const scoreRef = useRef(0)
+  const statusRef = useRef(status)
+  const boardRef = useRef<HTMLDivElement>(null)
+  const cleanup = useRef<ReturnType<typeof setTimeout>>()
+  const touch = useState(isTouchDevice)[0]
+  const { t: tr } = useI18n()
+  const g$ = tr.game
 
-//  Layout constants 
-const GRID_PX = 308
-const GAP_PX  = 6
-const CELL_PX = (GRID_PX - GAP_PX * 5) / 4
+  tilesRef.current = tiles
+  statusRef.current = status
 
-function tilePos(n: number) { return GAP_PX + n * (CELL_PX + GAP_PX) }
+  useEffect(() => () => clearTimeout(cleanup.current), [])
 
-//  Component 
-export const Game2048: React.FC = () => {
-  const [tiles,    setTiles]    = useState<TileData[]>(init)
-  const [score,    setScore]    = useState(0)
-  const [best,     setBest]     = useState(() => parseInt(localStorage.getItem('hs-2048') ?? '0', 10))
-  const [gameOver, setGameOver] = useState(false)
-  const [won,      setWon]      = useState(false)
+  const doMove = useCallback((dir: Dir) => {
+    if (statusRef.current === 'won' || statusRef.current === 'over') return
+    const result = move(tilesRef.current, dir)
+    if (!result.moved) return
 
-  const doMove = useCallback((dir: Direction) => {
-    setTiles(prev => {
-      if (gameOver) return prev
-      const { tiles: moved, score: pts, moved: didMove } = moveTiles(prev, dir)
-      if (!didMove) return prev
-      // Clear isNew/isMerged flags after first pass (so layout animates cleanly)
-      const withNew = spawnRandom(moved.map(t => ({ ...t, isNew: false, isMerged: false })))
-      setScore(s => {
-        const ns = s + pts
-        setBest(b => { const nb = Math.max(b, ns); if (nb > b) localStorage.setItem('hs-2048', String(nb)); return nb })
-        return ns
+    const next = spawn(result.tiles)
+    tilesRef.current = next
+    setTiles(next)
+
+    scoreRef.current += result.points
+    setScore(scoreRef.current)
+    setBest(b => Math.max(b, scoreRef.current))
+
+    // Remove merged-away tiles once they have slid under their partner.
+    clearTimeout(cleanup.current)
+    cleanup.current = setTimeout(() => {
+      setTiles(ts => {
+        const kept = ts.filter(t => !t.removing)
+        tilesRef.current = kept
+        return kept
       })
-      if (!canMove(withNew)) setGameOver(true)
-      if (hasWon(withNew) && !won) setWon(true)
-      return withNew
-    })
-  }, [gameOver, won])
+    }, MOVE_MS)
 
-  const restart = useCallback(() => {
-    setTiles(init())
-    setScore(0)
-    setGameOver(false)
-    setWon(false)
+    if (statusRef.current === 'playing' && next.some(t => t.value >= 2048 && !t.removing)) {
+      recordScore(KEY, scoreRef.current)
+      setStatus('won')
+    } else if (!canMove(next)) {
+      recordScore(KEY, scoreRef.current)
+      setStatus('over')
+    }
   }, [])
 
-  // Keyboard
-  useEffect(() => {
-    const map: Record<string, Direction> = {
-      ArrowLeft:'left', ArrowRight:'right', ArrowUp:'up', ArrowDown:'down',
-      a:'left', d:'right', w:'up', s:'down', A:'left', D:'right', W:'up', S:'down',
-    }
-    const onKey = (e: KeyboardEvent) => {
-      const dir = map[e.key];
-      if (!dir) return;
-      e.preventDefault();
-      doMove(dir)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [doMove])
+  const restart = useCallback(() => {
+    recordScore(KEY, scoreRef.current)
+    const t = initial()
+    tilesRef.current = t
+    scoreRef.current = 0
+    setTiles(t)
+    setScore(0)
+    setStatus('playing')
+  }, [])
 
-  // Touch swipe
-  useEffect(() => {
-    let sx = 0, sy = 0
-    const onStart = (e: TouchEvent) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY }
-    const onEnd   = (e: TouchEvent) => {
-      const dx = e.changedTouches[0].clientX - sx
-      const dy = e.changedTouches[0].clientY - sy
-      if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return
-      doMove(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'))
-    }
-    window.addEventListener('touchstart', onStart, { passive: true })
-    window.addEventListener('touchend',   onEnd,   { passive: true })
-    return () => { window.removeEventListener('touchstart', onStart); window.removeEventListener('touchend', onEnd) }
-  }, [doMove])
+  // Persist the best score if the dialog is closed mid-game.
+  useEffect(() => () => void recordScore(KEY, scoreRef.current), [])
 
-  const fs = (v: number) => v >= 1024 ? 'text-sm font-bold' : v >= 128 ? 'text-base font-bold' : 'text-xl font-bold'
+  const KEYS: Record<string, Dir> = {
+    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+    w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right',
+  }
+  useKeyboard(e => {
+    const dir = KEYS[e.key]
+    if (dir) doMove(dir)
+    if (e.key === 'r' || e.key === 'R') restart()
+  })
+  useSwipe(boardRef, doMove)
+
+  const gap = 'clamp(6px, 2.4cqw, 12px)'
 
   return (
-    <div className="flex flex-col items-center gap-4 select-none">
-      {/* Score row */}
-      <div className="flex items-center gap-3 w-full max-w-xs">
-        <div className="flex gap-2 flex-1">
-          {[{ l: 'SCORE', v: score }, { l: 'BEST', v: best }].map(({ l, v }) => (
-            <div key={l} className="flex-1 px-3 py-2 rounded-xl bg-[#1a1a2e] border border-[#7c3aed33] text-center">
-              <div className="text-[10px] font-mono tracking-widest text-violet-400 opacity-80">{l}</div>
-              <div className="font-heading font-bold text-lg text-white leading-none">{v}</div>
-            </div>
-          ))}
-        </div>
-        <button onClick={restart} className="p-2 rounded-xl bg-[#1a1a2e] border border-[#7c3aed33] text-violet-400 hover:text-violet-300 hover:border-violet-500 transition-all" aria-label="Restart">
-          <RefreshCw size={18} />
-        </button>
-      </div>
-
-      {/* Grid */}
-      <div
-        className="relative rounded-xl overflow-hidden"
-        style={{ width: GRID_PX, height: GRID_PX, background: '#13132a' }}
-      >
-        {/* Background cells */}
-        {Array.from({ length: 16 }, (_, i) => {
-          const r = Math.floor(i / 4), c = i % 4
-          return (
-            <div
-              key={i}
-              className="absolute rounded-lg"
-              style={{
-                top:    tilePos(r), left:  tilePos(c),
-                width:  CELL_PX,   height: CELL_PX,
-                background: '#1c1c38',
-              }}
-            />
-          )
-        })}
-
-        {/* Tiles with layout animation */}
-        <AnimatePresence>
-          {tiles.map(tile => {
-            const { bg, fg } = tileColor(tile.value)
-            return (
-              <motion.div
-                key={tile.id}
-                layout
-                layoutId={String(tile.id)}
-                initial={tile.isNew ? { scale: 0, opacity: 0 } : false}
-                animate={
-                  tile.isMerged
-                    ? { scale: [1, 1.18, 1], opacity: 1, transition: { duration: 0.22 } }
-                    : { scale: 1, opacity: 1, transition: { duration: 0.12 } }
+    <div>
+      <GameHud stats={[{ label: g$.score, value: score }, { label: g$.best, value: best }]} onRestart={restart} />
+      <div className="flex justify-center">
+        <div
+          ref={boardRef}
+          className="relative touch-none select-none overflow-hidden rounded-xl bg-[#18181b] dark:bg-[#111113]"
+          style={{
+            width: `min(100%, 460px, calc(100dvh - ${touch ? 360 : 220}px))`,
+            aspectRatio: '1',
+            containerType: 'inline-size',
+            minWidth: 240,
+          }}
+        >
+          <div className="absolute inset-0 grid grid-cols-4 grid-rows-4" style={{ gap, padding: gap }}>
+            {Array.from({ length: 16 }, (_, i) => (
+              <div key={i} className="rounded-lg bg-white/[0.05]" />
+            ))}
+          </div>
+          <div className="absolute inset-0" style={{ padding: gap }}>
+            <div className="relative h-full w-full">
+              {tiles.map(t => {
+                const st = styleFor(t.value)
+                const style: CSSProperties = {
+                  width: `calc((100% - 3 * ${gap}) / 4)`,
+                  height: `calc((100% - 3 * ${gap}) / 4)`,
+                  transform: `translate(calc(${t.c} * (100% + ${gap})), calc(${t.r} * (100% + ${gap})))`,
+                  transition: `transform ${MOVE_MS}ms ease-in-out`,
+                  zIndex: t.removing ? 1 : 2,
                 }
-                exit={{ scale: 0.5, opacity: 0, transition: { duration: 0.12 } }}
-                transition={{ layout: { type: 'spring', stiffness: 600, damping: 38 } }}
-                className="absolute flex items-center justify-center rounded-lg"
-                style={{
-                  top:        tilePos(tile.row),
-                  left:       tilePos(tile.col),
-                  width:      CELL_PX,
-                  height:     CELL_PX,
-                  background: bg,
-                  color:      fg,
-                }}
-              >
-                <span className={fs(tile.value)}>{tile.value}</span>
-              </motion.div>
-            )
-          })}
-        </AnimatePresence>
+                return (
+                  <div key={t.id} className="absolute left-0 top-0" style={style}>
+                    <div
+                      key={t.value}
+                      className={`grid h-full w-full place-items-center rounded-lg font-bold tabular-nums ${
+                        t.isNew ? 'animate-tile-in' : t.merged ? 'animate-tile-pop' : ''
+                      }`}
+                      style={{
+                        background: st.bg,
+                        color: st.fg,
+                        fontSize: t.value >= 1024 ? '6.5cqw' : t.value >= 128 ? '8cqw' : '9.5cqw',
+                      }}
+                    >
+                      {t.value}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
 
-        {/* Game-over overlay */}
-        <AnimatePresence>
-          {(gameOver || won) && (
-            <motion.div
-              className="absolute inset-0 flex flex-col items-center justify-center rounded-xl"
-              style={{ background: 'rgba(5,5,20,0.82)' }}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              <div className="text-4xl mb-2">{won ? '' : ''}</div>
-              <div className="font-heading font-bold text-xl text-white mb-1">
-                {won ? 'You Won!' : 'Game Over'}
+          {(status === 'won' || status === 'over') && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/60 text-center backdrop-blur-[2px]">
+              <p className="text-2xl font-semibold text-white">{status === 'won' ? g$.g2048.won : g$.g2048.noMoves}</p>
+              <p className="text-sm text-white/75">{g$.g2048.result(score)}</p>
+              <div className="flex gap-2">
+                {status === 'won' && (
+                  <button
+                    type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => setStatus('continue')}
+                    className="rounded-lg border border-white/30 px-4 py-2 text-sm font-medium text-white"
+                  >
+                    {g$.g2048.keepGoing}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={restart}
+                  className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-zinc-900"
+                >
+                  {g$.newGame}
+                </button>
               </div>
-              {gameOver && <div className="text-sm text-violet-300 mb-4">Score: {score}</div>}
-              <button
-                onClick={restart}
-                className="px-5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm transition-colors"
-              >
-                Play Again
-              </button>
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
-      </div>
-
-      {/* D-pad mobile controls */}
-      <div className="flex md:hidden flex-col items-center gap-1 mt-1">
-        <button onClick={() => doMove('up')} className="w-12 h-10 rounded-lg bg-[#1a1a2e] border border-[#7c3aed44] text-violet-400 text-xl font-bold hover:bg-violet-900/40 transition-colors"></button>
-        <div className="flex gap-1">
-          {(['left', 'down', 'right'] as Direction[]).map((d, i) => (
-            <button key={d} onClick={() => doMove(d)} className="w-12 h-10 rounded-lg bg-[#1a1a2e] border border-[#7c3aed44] text-violet-400 text-xl font-bold hover:bg-violet-900/40 transition-colors">
-              {['', '', ''][i]}
-            </button>
-          ))}
         </div>
       </div>
 
-      {/* Best score trophy */}
-      {best > 0 && (
-        <div className="flex items-center gap-1.5 text-xs text-violet-400 font-medium opacity-70">
-          <Trophy size={12} /> Best: {best}
+      {touch && (
+        <div className="mx-auto mt-4 grid w-44 grid-cols-3 gap-2">
+          <span />
+          <GameButton label={g$.up} onPress={() => doMove('up')}><ArrowUp size={20} /></GameButton>
+          <span />
+          <GameButton label={g$.left} onPress={() => doMove('left')}><ArrowLeft size={20} /></GameButton>
+          <GameButton label={g$.down} onPress={() => doMove('down')}><ArrowDown size={20} /></GameButton>
+          <GameButton label={g$.right} onPress={() => doMove('right')}><ArrowRight size={20} /></GameButton>
         </div>
       )}
+      {!touch && <p className="mt-3 text-center font-mono text-xs text-subtle">{g$.g2048.hint}</p>}
     </div>
   )
 }

@@ -1,86 +1,69 @@
-import React from 'react'
-import { motion } from 'framer-motion'
-import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from 'react'
 
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'outline' | 'ghost'
-  size?: 'sm' | 'md' | 'lg'
-  as?: 'button' | 'a'
-  href?: string
-  target?: string
-  rel?: string
-  download?: string
-  icon?: React.ReactNode
-  iconPosition?: 'left' | 'right'
+type Variant = 'primary' | 'secondary' | 'ghost'
+type Size = 'sm' | 'md' | 'lg'
+
+const base =
+  'inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-colors duration-150 select-none disabled:pointer-events-none disabled:opacity-60'
+
+const variants: Record<Variant, string> = {
+  primary: 'bg-accent text-accent-fg hover:bg-accent/90 shadow-sm shadow-accent/20',
+  secondary: 'border border-line bg-surface text-fg hover:bg-elevated',
+  ghost: 'text-muted hover:text-fg hover:bg-elevated',
 }
 
-export const Button: React.FC<ButtonProps> = ({
-  children,
-  variant = 'primary',
-  size = 'md',
-  as: Tag = 'button',
-  href,
+const sizes: Record<Size, string> = {
+  sm: 'h-9 px-3.5 text-sm',
+  md: 'h-11 px-5 text-sm',
+  lg: 'h-12 px-6 text-[15px]',
+}
+
+interface CommonProps {
+  variant?: Variant
+  size?: Size
+  icon?: ReactNode
+  iconRight?: ReactNode
+  children: ReactNode
+  className?: string
+}
+
+function buttonClass(variant: Variant = 'primary', size: Size = 'md', extra = '') {
+  return `${base} ${variants[variant]} ${sizes[size]} ${extra}`
+}
+
+export function Button({
+  variant,
+  size,
   icon,
-  iconPosition = 'right',
+  iconRight,
+  children,
+  className = '',
+  type = 'button',
+  ...rest
+}: CommonProps & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button type={type} className={buttonClass(variant, size, className)} {...rest}>
+      {icon}
+      {children}
+      {iconRight}
+    </button>
+  )
+}
+
+export function ButtonLink({
+  variant,
+  size,
+  icon,
+  iconRight,
+  children,
   className = '',
   ...rest
-}) => {
-  const reduced = usePrefersReducedMotion()
-
-  const base =
-    'inline-flex items-center gap-2 font-heading font-semibold rounded-lg transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 select-none cursor-pointer'
-
-  const variants = {
-    primary:
-      'bg-accent-500 hover:bg-accent-600 text-white shadow-violet-glow hover:shadow-violet-glow-lg',
-    outline:
-      'border border-accent-500 text-accent-400 hover:bg-accent-500 hover:text-white',
-    ghost:
-      'text-accent-400 hover:text-accent-300 hover:bg-accent-500/10',
-  }
-
-  const sizes = {
-    sm:  'px-3 py-1.5 text-sm',
-    md:  'px-5 py-2.5 text-base',
-    lg:  'px-7 py-3.5 text-lg',
-  }
-
-  const cls = `${base} ${variants[variant]} ${sizes[size]} ${className}`
-
-  const content = (
-    <>
-      {icon && iconPosition === 'left'  && <span>{icon}</span>}
-      {children}
-      {icon && iconPosition === 'right' && <span>{icon}</span>}
-    </>
-  )
-
-  if (Tag === 'a') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const AnchorMotion = motion.a as any
-    return (
-      <AnchorMotion
-        href={href}
-        className={cls}
-        whileHover={reduced ? {} : { scale: 1.04 }}
-        whileTap={reduced  ? {} : { scale: 0.97 }}
-        {...rest}
-      >
-        {content}
-      </AnchorMotion>
-    )
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ButtonMotion = motion.button as any
+}: CommonProps & AnchorHTMLAttributes<HTMLAnchorElement>) {
   return (
-    <ButtonMotion
-      className={cls}
-      whileHover={reduced ? {} : { scale: 1.04 }}
-      whileTap={reduced   ? {} : { scale: 0.97 }}
-      {...rest}
-    >
-      {content}
-    </ButtonMotion>
+    <a className={buttonClass(variant, size, className)} {...rest}>
+      {icon}
+      {children}
+      {iconRight}
+    </a>
   )
 }

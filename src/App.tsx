@@ -1,89 +1,58 @@
-import React, { Suspense, lazy, createContext, useContext } from 'react'
-import { useTheme } from '@/hooks/useTheme'
+import { MotionConfig } from 'framer-motion'
+import { Analytics } from '@vercel/analytics/react'
+import { ThemeProvider } from '@/theme/ThemeProvider'
+import { I18nProvider, useI18n } from '@/i18n/I18nProvider'
 import { Navbar } from '@/components/layout/Navbar'
 import { Footer } from '@/components/layout/Footer'
 import { ScrollProgress } from '@/components/layout/ScrollProgress'
-import { CursorEffect } from '@/three/CursorEffect'
 import { Hero } from '@/sections/Hero'
+import { About } from '@/sections/About'
+import { Experience } from '@/sections/Experience'
+import { Projects } from '@/sections/Projects'
+import { Skills } from '@/sections/Skills'
+import { Education } from '@/sections/Education'
+import { Arcade } from '@/sections/Arcade'
+import { Contact } from '@/sections/Contact'
 
-// Lazy-load below-the-fold sections
-const About      = lazy(() => import('@/sections/About').then(m =>      ({ default: m.About      })))
-const Experience = lazy(() => import('@/sections/Experience').then(m => ({ default: m.Experience })))
-const Projects   = lazy(() => import('@/sections/Projects').then(m =>   ({ default: m.Projects   })))
-const Skills     = lazy(() => import('@/sections/Skills').then(m =>     ({ default: m.Skills     })))
-const Education  = lazy(() => import('@/sections/Education').then(m =>  ({ default: m.Education  })))
-const Games      = lazy(() => import('@/sections/Games').then(m =>      ({ default: m.Games      })))
-const Contact    = lazy(() => import('@/sections/Contact').then(m =>    ({ default: m.Contact    })))
-
-// ─── Theme Context ─────────────────────────────────────────────────────────────
-interface ThemeCtx {
-  isDark: boolean
-  toggle: () => void
-}
-
-export const ThemeContext = createContext<ThemeCtx>({ isDark: true, toggle: () => {} })
-
-export const useThemeContext = () => useContext(ThemeContext)
-
-const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isDark, toggle } = useTheme()
-
+function Page() {
+  const { t } = useI18n()
   return (
-    <ThemeContext.Provider value={{ isDark, toggle }}>
-      {children}
-    </ThemeContext.Provider>
+    <>
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-accent focus:px-4 focus:py-2 focus:text-accent-fg"
+      >
+        {t.nav.skip}
+      </a>
+      <ScrollProgress />
+      <Navbar />
+      <main id="main">
+        <Hero />
+        <About />
+        <Experience />
+        <Projects />
+        <Skills />
+        <Education />
+        <Arcade />
+        <Contact />
+      </main>
+      <Footer />
+    </>
   )
 }
 
-// ─── Section loading fallback ─────────────────────────────────────────────────
-const SectionFallback: React.FC = () => (
-  <div className="flex items-center justify-center py-24">
-    <div className="w-8 h-8 rounded-full border-2 border-accent-500 border-t-transparent animate-spin" role="status" aria-label="Loading section" />
-  </div>
-)
-
-// ─── App ───────────────────────────────────────────────────────────────────────
-const App: React.FC = () => (
-  <ThemeProvider>
-    <ScrollProgress />
-    <CursorEffect />
-    <Navbar />
-
-    <main id="main-content">
-      {/* Hero renders eagerly (above the fold) */}
-      <Hero />
-
-      <Suspense fallback={<SectionFallback />}>
-        <About />
-      </Suspense>
-
-      <Suspense fallback={<SectionFallback />}>
-        <Experience />
-      </Suspense>
-
-      <Suspense fallback={<SectionFallback />}>
-        <Projects />
-      </Suspense>
-
-      <Suspense fallback={<SectionFallback />}>
-        <Skills />
-      </Suspense>
-
-      <Suspense fallback={<SectionFallback />}>
-        <Education />
-      </Suspense>
-
-      <Suspense fallback={<SectionFallback />}>
-        <Games />
-      </Suspense>
-
-      <Suspense fallback={<SectionFallback />}>
-        <Contact />
-      </Suspense>
-    </main>
-
-    <Footer />
-  </ThemeProvider>
-)
-
-export default App
+// The page sections are small, so they ship in the main bundle.
+// Only the heavy parts (3D scene, games, email SDK) are code-split.
+export default function App() {
+  return (
+    <ThemeProvider>
+      <I18nProvider>
+        <MotionConfig reducedMotion="user">
+          <Page />
+        </MotionConfig>
+      </I18nProvider>
+      {/* Page-view stats; only active once Analytics is enabled in the Vercel dashboard. */}
+      <Analytics />
+    </ThemeProvider>
+  )
+}

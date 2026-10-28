@@ -1,102 +1,90 @@
-import React, { useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useEffect, useRef } from 'react'
+import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import { X } from 'lucide-react'
 
 interface ModalProps {
-  isOpen: boolean
+  open: boolean
   onClose: () => void
-  title?: string
-  children: React.ReactNode
-  size?: 'sm' | 'md' | 'lg' | 'xl' | 'full'
+  title: string
+  subtitle?: string
+  children: ReactNode
 }
 
-const sizeMap = {
-  sm:   'max-w-sm',
-  md:   'max-w-lg',
-  lg:   'max-w-2xl',
-  xl:   'max-w-4xl',
-  full: 'max-w-[95vw] max-h-[95vh]',
-}
+/**
+ * Large dialog used by the arcade. It fills most of the viewport so games get room,
+ * and its body scrolls if a game is taller than the screen.
+ */
+export function Modal({ open, onClose, title, subtitle, children }: ModalProps) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
-export const Modal: React.FC<ModalProps> = ({
-  isOpen,
-  onClose,
-  title,
-  children,
-  size = 'lg',
-}) => {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    if (isOpen) {
-      document.addEventListener('keydown', onKey)
-      document.body.style.overflow = 'hidden'
+    if (!open) return
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseRef.current()
     }
+    document.addEventListener('keydown', onKey)
+
+    // Lock page scroll without the layout jump caused by the scrollbar disappearing.
+    const scrollbar = window.innerWidth - document.documentElement.clientWidth
+    document.body.style.overflow = 'hidden'
+    document.body.style.paddingRight = `${scrollbar}px`
+    panelRef.current?.focus()
+
     return () => {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
+      document.body.style.paddingRight = ''
+      previouslyFocused?.focus?.()
     }
-  }, [isOpen, onClose])
+  }, [open])
 
-  return (
+  return createPortal(
     <AnimatePresence>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
           <motion.div
-            key="backdrop"
-            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-            aria-hidden="true"
-          />
-
-          {/* Panel */}
-          <motion.div
-            key="panel"
+            ref={panelRef}
             role="dialog"
             aria-modal="true"
             aria-label={title}
-            className={`fixed inset-0 z-50 flex items-center justify-center p-4`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            tabIndex={-1}
+            className="relative flex max-h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl outline-none sm:max-h-[calc(100dvh-2rem)]"
+            initial={{ scale: 0.97, y: 12 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.97, y: 12 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 32 }}
           >
-            <motion.div
-              className={`relative w-full ${sizeMap[size]} bg-dark-card border border-dark-border rounded-2xl shadow-2xl overflow-hidden`}
-              initial={{ scale: 0.9, y: 30 }}
-              animate={{ scale: 1,   y: 0  }}
-              exit={{   scale: 0.9,  y: 30 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              onClick={e => e.stopPropagation()}
-            >
-              {title && (
-                <div className="flex items-center justify-between px-6 py-4 border-b border-dark-border">
-                  <h3 className="font-heading font-semibold text-lg text-white">{title}</h3>
-                  <button
-                    onClick={onClose}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-dark-border transition-colors"
-                    aria-label="Close modal"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              )}
-              {!title && (
-                <button
-                  onClick={onClose}
-                  className="absolute top-3 right-3 z-10 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-dark-border transition-colors"
-                  aria-label="Close modal"
-                >
-                  <X size={18} />
-                </button>
-              )}
-              <div className="overflow-auto">{children}</div>
-            </motion.div>
+            <div className="flex shrink-0 items-center justify-between gap-4 border-b border-line px-4 py-3 sm:px-6">
+              <div className="min-w-0">
+                <h2 className="truncate text-base font-semibold text-fg">{title}</h2>
+                {subtitle && <p className="hidden truncate font-mono text-xs text-subtle sm:block">{subtitle}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-elevated hover:text-fg"
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-6">{children}</div>
           </motion.div>
-        </>
+        </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   )
 }

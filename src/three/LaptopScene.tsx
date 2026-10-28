@@ -1,219 +1,230 @@
-﻿import React, { useRef, useMemo } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { Environment } from '@react-three/drei'
 import * as THREE from 'three'
+import { createCodeScreen, TOTAL_CHARS } from './codeTexture'
+import { useTheme } from '@/theme/ThemeProvider'
 
-const BASE_W = 3.2
-const BASE_D = 2.0
-const BASE_H = 0.12
-const SCR_W  = 2.72
-const SCR_H  = 1.72
-const LID_ANGLE = -0.52
+const BASE = { w: 3.3, d: 2.2, h: 0.1 }
+const LID = { w: 3.3, h: 2.15, d: 0.07 }
+const SCREEN = { w: 3.0, h: 1.875 }
+const LID_TILT = -0.26 // radians back from vertical
+const BEVEL = 0.012
+const TOP = BASE.h / 2 + BEVEL // top surface of the base
+const FRONT = LID.d / 2 + BEVEL // front surface of the lid
 
-const KEY_MESHES = ((): { key: string; x: number; z: number; kw: number }[] => {
-  const rows: { z: number; n: number; kw: number }[] = [
-    { z: -0.30, n: 12, kw: 0.175 },
-    { z: -0.12, n: 12, kw: 0.175 },
-    { z:  0.06, n: 11, kw: 0.183 },
-    { z:  0.24, n:  9, kw: 0.195 },
-  ]
-  const result: { key: string; x: number; z: number; kw: number }[] = []
-  rows.forEach(({ z, n, kw }) => {
-    const totalW = n * kw + (n - 1) * 0.012
-    for (let i = 0; i < n; i++) {
-      const x = -totalW / 2 + i * (kw + 0.012) + kw / 2
-      result.push({ key: `${z}-${i}`, x, z, kw })
-    }
+/** A box with rounded vertical edges, extruded from a 2D outline. */
+function roundedSlab(w: number, d: number, h: number, r: number) {
+  const s = new THREE.Shape()
+  const x = -w / 2
+  const y = -d / 2
+  s.moveTo(x + r, y)
+  s.lineTo(x + w - r, y)
+  s.quadraticCurveTo(x + w, y, x + w, y + r)
+  s.lineTo(x + w, y + d - r)
+  s.quadraticCurveTo(x + w, y + d, x + w - r, y + d)
+  s.lineTo(x + r, y + d)
+  s.quadraticCurveTo(x, y + d, x, y + d - r)
+  s.lineTo(x, y + r)
+  s.quadraticCurveTo(x, y, x + r, y)
+  const geo = new THREE.ExtrudeGeometry(s, {
+    depth: h,
+    bevelEnabled: true,
+    bevelThickness: BEVEL,
+    bevelSize: BEVEL,
+    bevelSegments: 2,
+    curveSegments: 8,
   })
-  return result
-})()
+  geo.center()
+  return geo
+}
 
-const ScreenContent: React.FC = () => {
-  const meshRefs = useRef<(THREE.Mesh | null)[]>([])
-
-  const lines = useMemo(() => {
-    const palette = ['#a78bfa', '#60a5fa', '#34d399', '#fb923c', '#f472b6', '#fbbf24', '#e879f9']
-    const count   = 11
-    const result: { x: number; y: number; w: number; color: string }[] = []
-    const indents = [0, 0.15, 0.30, 0.15, 0, 0.15, 0.30, 0.15, 0, 0.15, 0.30]
-    for (let i = 0; i < count; i++) {
-      const indent = indents[i] ?? 0
-      const maxW   = SCR_W * 0.8 - indent
-      const w      = 0.18 + Math.random() * Math.min(0.75, maxW * 0.85)
-      const x      = -(SCR_W / 2) * 0.78 + indent
-      const y      = (SCR_H / 2) * 0.78 - i * ((SCR_H * 0.82) / count)
-      result.push({ x, y, w, color: palette[i % palette.length] })
-      const x2 = x + w + 0.09
-      if (x2 + 0.1 < (SCR_W / 2) * 0.78) {
-        result.push({ x: x2, y, w: 0.08 + Math.random() * 0.22, color: palette[(i + 3) % palette.length] })
-      }
+function useKeyLayout() {
+  return useMemo(() => {
+    const keys: { x: number; z: number; w: number }[] = []
+    const rows = [
+      { z: -0.62, n: 14 },
+      { z: -0.44, n: 14 },
+      { z: -0.26, n: 13 },
+      { z: -0.08, n: 12 },
+    ]
+    const gap = 0.03
+    const total = 2.7
+    for (const row of rows) {
+      const kw = (total - gap * (row.n - 1)) / row.n
+      for (let i = 0; i < row.n; i++) keys.push({ x: -total / 2 + kw / 2 + i * (kw + gap), z: row.z, w: kw })
     }
-    return result
+    keys.push({ x: 0, z: 0.1, w: 1.3 }) // space bar
+    return keys
   }, [])
+}
 
-  useFrame(({ clock }) => {
-    const t = clock.elapsedTime
-    meshRefs.current.forEach((m, i) => {
-      if (!m) return
-      ;(m.material as THREE.MeshStandardMaterial).emissiveIntensity =
-        0.52 + Math.sin(t * 0.82 + i * 0.43) * 0.23
+function Keyboard({ color }: { color: string }) {
+  const ref = useRef<THREE.InstancedMesh>(null)
+  const keys = useKeyLayout()
+
+  useEffect(() => {
+    const mesh = ref.current
+    if (!mesh) return
+    const m = new THREE.Matrix4()
+    keys.forEach((k, i) => {
+      m.compose(
+        new THREE.Vector3(k.x, TOP + 0.006, k.z),
+        new THREE.Quaternion(),
+        new THREE.Vector3(k.w, 1, 1)
+      )
+      mesh.setMatrixAt(i, m)
     })
-  })
+    mesh.instanceMatrix.needsUpdate = true
+  }, [keys])
 
   return (
-    <>
-      <mesh position={[0, (SCR_H / 2) * 0.90, 0.002]}>
-        <boxGeometry args={[SCR_W * 0.90, 0.038, 0.001]} />
-        <meshStandardMaterial color="#7c3aed" emissive="#7c3aed" emissiveIntensity={0.55} roughness={0.1} />
-      </mesh>
-      {([-SCR_W * 0.37, -SCR_W * 0.31, -SCR_W * 0.25] as number[]).map((x, i) => (
-        <mesh key={i} position={[x, (SCR_H / 2) * 0.90, 0.003]}>
-          <cylinderGeometry args={[0.026, 0.026, 0.002, 14]} />
-          <meshStandardMaterial
-            color={['#ff5f56', '#ffbd2e', '#27c93f'][i]}
-            emissive={['#ff5f56', '#ffbd2e', '#27c93f'][i]}
-            emissiveIntensity={0.85}
-          />
-        </mesh>
-      ))}
-      <mesh position={[-(SCR_W / 2) * 0.73, (SCR_H / 2) * 0.42, 0.002]}>
-        <boxGeometry args={[0.022, 0.052, 0.001]} />
-        <meshStandardMaterial color="#a78bfa" emissive="#a78bfa" emissiveIntensity={1.0} />
-      </mesh>
-      {lines.map((l, i) => (
-        <mesh key={i} ref={el => { meshRefs.current[i] = el }} position={[l.x + l.w / 2, l.y, 0.002]}>
-          <boxGeometry args={[l.w, 0.030, 0.001]} />
-          <meshStandardMaterial color={l.color} emissive={l.color} emissiveIntensity={0.58} roughness={0.1} />
-        </mesh>
-      ))}
-    </>
+    <instancedMesh ref={ref} args={[undefined, undefined, keys.length]}>
+      <boxGeometry args={[1, 0.02, 0.15]} />
+      <meshStandardMaterial color={color} roughness={0.7} metalness={0.1} />
+    </instancedMesh>
   )
 }
 
-const Laptop: React.FC = () => {
-  const groupRef      = useRef<THREE.Group>(null)
-  const screenGlowRef = useRef<THREE.MeshStandardMaterial>(null)
+function Screen() {
+  const screen = useMemo(() => createCodeScreen(), [])
+  useEffect(() => () => screen.dispose(), [screen])
 
   useFrame(({ clock }) => {
-    const t = clock.elapsedTime
-    if (groupRef.current) {
-      groupRef.current.position.y = Math.sin(t * 0.65) * 0.055
-      groupRef.current.rotation.y = -0.28 + Math.sin(t * 0.38) * 0.07
-    }
-    if (screenGlowRef.current) {
-      screenGlowRef.current.emissiveIntensity = 0.22 + Math.sin(t * 1.25) * 0.07
-    }
+    // Type for ~8s, hold for 4s, then start over.
+    const cycle = 12
+    const t = clock.elapsedTime % cycle
+    const typed = Math.min(TOTAL_CHARS, Math.floor((t / 8) * TOTAL_CHARS))
+    const blink = Math.floor(clock.elapsedTime * 2) % 2 === 0
+    screen.draw(typed, blink)
   })
 
-  const bodyMat = { color: '#1c1c2e' as const, metalness: 0.90, roughness: 0.09 }
+  return (
+    <mesh position={[0, LID.h / 2, FRONT + 0.002]}>
+      <planeGeometry args={[SCREEN.w, SCREEN.h]} />
+      <meshBasicMaterial map={screen.texture} toneMapped={false} />
+    </mesh>
+  )
+}
+
+function ContactShadow() {
+  const texture = useMemo(() => {
+    const c = document.createElement('canvas')
+    c.width = c.height = 128
+    const g = c.getContext('2d')!
+    const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64)
+    grd.addColorStop(0, 'rgba(0,0,0,0.55)')
+    grd.addColorStop(1, 'rgba(0,0,0,0)')
+    g.fillStyle = grd
+    g.fillRect(0, 0, 128, 128)
+    return new THREE.CanvasTexture(c)
+  }, [])
+  return (
+    <mesh rotation-x={-Math.PI / 2} position={[0, -TOP - 0.01, 0.1]} scale={[5.2, 3.6, 1]}>
+      <planeGeometry />
+      <meshBasicMaterial map={texture} transparent depthWrite={false} />
+    </mesh>
+  )
+}
+
+function Laptop({ dark }: { dark: boolean }) {
+  const group = useRef<THREE.Group>(null)
+  const pointer = useRef({ x: 0, y: 0 })
+  const baseGeo = useMemo(() => roundedSlab(BASE.w, BASE.d, BASE.h, 0.12), [])
+  const lidGeo = useMemo(() => roundedSlab(LID.w, LID.h, LID.d, 0.12), [])
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      pointer.current.x = (e.clientX / window.innerWidth) * 2 - 1
+      pointer.current.y = (e.clientY / window.innerHeight) * 2 - 1
+    }
+    window.addEventListener('pointermove', onMove, { passive: true })
+    return () => window.removeEventListener('pointermove', onMove)
+  }, [])
+
+  useFrame(({ clock }, delta) => {
+    const g = group.current
+    if (!g) return
+    const t = clock.elapsedTime
+    const ease = 1 - Math.exp(-delta * 3) // frame-rate independent smoothing
+    g.rotation.y += (-0.34 + pointer.current.x * 0.2 - g.rotation.y) * ease
+    g.rotation.x += (pointer.current.y * 0.06 - g.rotation.x) * ease
+    g.position.y = Math.sin(t * 0.9) * 0.04
+  })
+
+  const body = dark ? '#4a4a57' : '#c9c9d2'
+  const deck = dark ? '#34343e' : '#b7b7c2'
+  const keys = dark ? '#16161b' : '#2a2a31'
 
   return (
-    <group ref={groupRef} position={[0, -0.35, 0]}>
-      <mesh castShadow receiveShadow>
-        <boxGeometry args={[BASE_W, BASE_H, BASE_D]} />
-        <meshStandardMaterial {...bodyMat} />
+    <group ref={group}>
+      {/* Base */}
+      <mesh geometry={baseGeo} rotation-x={Math.PI / 2}>
+        <meshStandardMaterial color={body} metalness={0.55} roughness={0.38} />
       </mesh>
-      {([-BASE_W / 2 - 0.01, BASE_W / 2 + 0.01] as number[]).map((bx, i) => (
-        <mesh key={i} position={[bx, 0, 0]}>
-          <boxGeometry args={[0.022, BASE_H * 0.55, BASE_D * 0.97]} />
-          <meshStandardMaterial color="#14142a" metalness={0.96} roughness={0.04} />
-        </mesh>
-      ))}
-      {([
-        [-1.35, -BASE_H / 2 - 0.012, -0.82],
-        [ 1.35, -BASE_H / 2 - 0.012, -0.82],
-        [-1.35, -BASE_H / 2 - 0.012,  0.82],
-        [ 1.35, -BASE_H / 2 - 0.012,  0.82],
-      ] as [number, number, number][]).map((p, i) => (
-        <mesh key={i} position={p}>
-          <cylinderGeometry args={[0.075, 0.085, 0.022, 8]} />
-          <meshStandardMaterial color="#090912" roughness={1} />
-        </mesh>
-      ))}
-      <mesh position={[0, BASE_H / 2 + 0.002, 0.08]}>
-        <boxGeometry args={[2.58, 0.003, 1.68]} />
-        <meshStandardMaterial color="#0e0e1c" roughness={0.97} />
+      <mesh position={[0, TOP + 0.001, -0.25]} rotation-x={-Math.PI / 2}>
+        <planeGeometry args={[2.86, 0.98]} />
+        <meshStandardMaterial color={deck} roughness={0.8} />
       </mesh>
-      {KEY_MESHES.map(({ key, x, z, kw }) => (
-        <mesh key={key} position={[x, BASE_H / 2 + 0.006, z]}>
-          <boxGeometry args={[kw, 0.007, 0.072]} />
-          <meshStandardMaterial color="#131328" roughness={0.88} metalness={0.12} />
-        </mesh>
-      ))}
-      <mesh position={[0.04, BASE_H / 2 + 0.006, 0.385]}>
-        <boxGeometry args={[0.78, 0.007, 0.072]} />
-        <meshStandardMaterial color="#13132a" roughness={0.88} metalness={0.12} />
-      </mesh>
-      <mesh position={[0, BASE_H / 2 + 0.003, 0.74]}>
-        <boxGeometry args={[0.80, 0.003, 0.52]} />
-        <meshStandardMaterial color="#101020" roughness={0.50} metalness={0.38} />
-      </mesh>
-      <mesh position={[0, BASE_H / 2 + 0.002, -(BASE_D / 2) + 0.045]}>
-        <boxGeometry args={[BASE_W * 0.88, 0.016, 0.05]} />
-        <meshStandardMaterial color="#0c0c1e" metalness={0.95} roughness={0.05} />
+      <Keyboard color={keys} />
+      <mesh position={[0, TOP + 0.001, 0.62]} rotation-x={-Math.PI / 2}>
+        <planeGeometry args={[1.15, 0.62]} />
+        <meshStandardMaterial color={deck} roughness={0.45} metalness={0.2} />
       </mesh>
 
-      <group position={[0, BASE_H / 2, -(BASE_D / 2)]} rotation={[LID_ANGLE, 0, 0]}>
-        <mesh position={[0, SCR_H / 2 + 0.04, 0]} castShadow>
-          <boxGeometry args={[BASE_W, SCR_H + 0.12, 0.074]} />
-          <meshStandardMaterial {...bodyMat} />
+      {/* Lid, hinged at the back edge of the base */}
+      <group position={[0, TOP, -BASE.d / 2 + 0.06]} rotation-x={LID_TILT}>
+        <mesh geometry={lidGeo} position={[0, LID.h / 2, 0]}>
+          <meshStandardMaterial color={body} metalness={0.55} roughness={0.38} />
         </mesh>
-        {([-BASE_W / 2 - 0.01, BASE_W / 2 + 0.01] as number[]).map((bx, i) => (
-          <mesh key={i} position={[bx, SCR_H / 2 + 0.04, 0]}>
-            <boxGeometry args={[0.022, SCR_H * 0.97, 0.052]} />
-            <meshStandardMaterial color="#14142a" metalness={0.96} roughness={0.04} />
-          </mesh>
-        ))}
-        <mesh position={[0, SCR_H / 2 + 0.04, -0.040]}>
-          <cylinderGeometry args={[0.20, 0.20, 0.007, 36]} />
-          <meshStandardMaterial color="#7c3aed" emissive="#7c3aed" emissiveIntensity={0.60} roughness={0.18} metalness={0.45} />
+        <mesh position={[0, LID.h / 2, FRONT + 0.001]}>
+          <planeGeometry args={[LID.w - 0.12, LID.h - 0.12]} />
+          <meshStandardMaterial color="#050507" roughness={0.25} />
         </mesh>
-        <mesh position={[0, SCR_H / 2 + 0.04, 0.040]}>
-          <boxGeometry args={[BASE_W - 0.04, SCR_H + 0.06, 0.009]} />
-          <meshStandardMaterial color="#08080f" roughness={0.98} />
-        </mesh>
-        <mesh position={[0, SCR_H / 2 + 0.04, 0.046]}>
-          <boxGeometry args={[SCR_W, SCR_H, 0.004]} />
-          <meshStandardMaterial
-            ref={screenGlowRef}
-            color="#050510"
-            emissive="#5b21b6"
-            emissiveIntensity={0.22}
-            roughness={0.04}
-            metalness={0.06}
-          />
-        </mesh>
-        <group position={[0, SCR_H / 2 + 0.04, 0.050]}>
-          <ScreenContent />
-        </group>
-        <mesh position={[0, SCR_H + 0.08, 0.037]}>
-          <cylinderGeometry args={[0.028, 0.028, 0.014, 12]} />
-          <meshStandardMaterial color="#0c0c1a" roughness={0.18} metalness={0.4} />
-        </mesh>
-        <pointLight position={[0, SCR_H / 2, 0.6]} intensity={1.1} color="#7c3aed" distance={5} />
+        <Screen />
       </group>
 
-      <pointLight position={[0, 0.8, 1.2]} intensity={0.45} color="#60a5fa" distance={5} />
+      <ContactShadow />
     </group>
   )
 }
 
-interface LaptopSceneProps { className?: string }
+export default function LaptopScene() {
+  const wrapper = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(true)
+  const [ready, setReady] = useState(false)
+  const { isDark } = useTheme()
 
-export const LaptopScene: React.FC<LaptopSceneProps> = ({ className = '' }) => (
-  <div className={`w-full h-full ${className}`} aria-hidden="true">
-    <Canvas
-      camera={{ position: [0, 2.5, 6.0], fov: 42 }}
-      gl={{ antialias: true, alpha: true }}
-      style={{ background: 'transparent' }}
-      shadows
+  // Stop rendering entirely while the hero is scrolled out of view.
+  useEffect(() => {
+    const el = wrapper.current
+    if (!el) return
+    const io = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting))
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={wrapper}
+      className={`absolute inset-0 transition-opacity duration-700 ${ready ? 'opacity-100' : 'opacity-0'}`}
     >
-      <ambientLight intensity={0.20} />
-      <directionalLight position={[3, 6, 5]} intensity={0.75} color="#ffffff" castShadow />
-      <pointLight position={[-4, 3, 2]} intensity={0.30} color="#60a5fa" />
-      <pointLight position={[ 4, -1, 3]} intensity={0.18} color="#a78bfa" />
-      <Environment preset="city" />
-      <Laptop />
-    </Canvas>
-  </div>
-)
+      <Canvas
+        frameloop={visible ? 'always' : 'never'}
+        dpr={[1, 1.75]}
+        gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
+        camera={{ position: [0, 2.5, 7.9], fov: 34 }}
+        onCreated={({ camera }) => {
+          camera.lookAt(0, 0.62, 0)
+          setReady(true)
+        }}
+      >
+        <hemisphereLight args={[isDark ? '#d6d2ff' : '#ffffff', isDark ? '#15151c' : '#d4d4dc', isDark ? 1.9 : 1.8]} />
+        <directionalLight position={[3, 5, 4]} intensity={isDark ? 2.6 : 2.4} />
+        <directionalLight position={[-4, 2, 3]} intensity={isDark ? 0.8 : 0.6} color="#c7d2fe" />
+        <pointLight position={[-2.5, 2.2, -1.5]} intensity={18} color="#7c6cff" />
+        <pointLight position={[0, 1.2, 2.2]} intensity={3} color="#a79dff" />
+        <Laptop dark={isDark} />
+      </Canvas>
+    </div>
+  )
+}
